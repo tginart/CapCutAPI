@@ -1,5 +1,6 @@
 # 导入必要的模块
 import os
+from urllib.parse import urlparse, unquote
 import pyJianYingDraft as draft
 import time
 from util import generate_draft_url, is_windows_path, url_to_hash
@@ -73,10 +74,29 @@ def add_audio_track(
         
         # audio_duration = duration_result["output"]
     
-    # Download audio to local
-    # local_audio_path = download_audio(audio_url, draft_dir)
+    # Determine if input is a local file path (or file:// URI) vs remote URL
+    local_path = None
+    if isinstance(audio_url, str):
+        if audio_url.startswith("file://"):
+            parsed = urlparse(audio_url)
+            local_path = os.path.abspath(unquote(parsed.path))
+        elif os.path.exists(audio_url) and os.path.isfile(audio_url):
+            local_path = os.path.abspath(audio_url)
 
-    material_name = f"audio_{url_to_hash(audio_url)}.mp3"  # Use original filename + timestamp + fixed mp3 extension
+    # Build material_name and remote spec
+    if local_path:
+        # Only support common audio formats; fail fast for others
+        _, ext = os.path.splitext(local_path)
+        ext = ext.lower()
+        supported_audio_exts = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'}
+        if ext not in supported_audio_exts:
+            raise ValueError(f"Only audio files with extensions {supported_audio_exts} are supported, got '{ext}'")
+        material_name = os.path.basename(local_path)
+        remote_spec = local_path
+    else:
+        # For remote URLs, keep previous hashing scheme and .mp3 extension
+        material_name = f"audio_{url_to_hash(audio_url)}.mp3"
+        remote_spec = audio_url
     
     # Build draft_audio_path
     draft_audio_path = None
@@ -101,9 +121,9 @@ def add_audio_track(
     # Create audio segment
     if draft_audio_path:
         print('replace_path:', draft_audio_path)
-        audio_material = draft.Audio_material(replace_path=draft_audio_path, remote_url=audio_url, material_name=material_name, duration=audio_duration)
+        audio_material = draft.Audio_material(replace_path=draft_audio_path, remote_url=remote_spec, material_name=material_name, duration=audio_duration)
     else:
-        audio_material = draft.Audio_material(remote_url=audio_url, material_name=material_name, duration=audio_duration)
+        audio_material = draft.Audio_material(remote_url=remote_spec, material_name=material_name, duration=audio_duration)
     audio_segment = draft.Audio_segment(
         audio_material,  # Pass material object
         target_timerange=trange(f"{target_start}s", f"{duration}s"),  # Use target_start and duration

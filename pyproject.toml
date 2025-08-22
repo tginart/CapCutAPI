@@ -20,13 +20,11 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.28.0",
-    "Pillow>=9.0.0",
-    "numpy>=1.21.0",
-    "opencv-python>=4.6.0",
-    "ffmpeg-python>=0.2.0",
-    "pydantic>=2.0.0",
-    "fastapi>=0.100.0",
-    "uvicorn[standard]>=0.23.0",
+    "flask>=2.3.0",
+    "imageio>=2.9.0",
+    "oss2>=2.17.0",
+    "json5>=0.9.14",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
@@ -43,3 +41,34 @@ mcp = [
 Homepage = "https://github.com/ashreo/CapCutAPI"
 Repository = "https://github.com/ashreo/CapCutAPI.git"
 Issues = "https://github.com/ashreo/CapCutAPI/issues"
+
+[tool.setuptools]
+include-package-data = true
+py-modules = [
+    "add_audio_track",
+    "add_effect_impl",
+    "add_image_impl",
+    "clone_draft",
+    "add_sticker_impl",
+    "add_subtitle_impl",
+    "add_text_impl",
+    "add_video_keyframe_impl",
+    "add_video_track",
+    "capcut_server",
+    "create_draft",
+    "downloader",
+    "draft_cache",
+    "get_duration_impl",
+    "mcp_server",
+    "oss",
+    "list_drafts",
+    "save_draft_impl",
+    "save_task_cache",
+    "util",
+]
+
+[tool.setuptools.packages.find]
+include = ["pyJianYingDraft", "settings", "CapCutAPI"]
+
+[tool.setuptools.package-data]
+pyJianYingDraft = ["draft_content_template.json"]

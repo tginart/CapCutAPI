@@ -4,7 +4,7 @@ import pyJianYingDraft as draft
 import shutil
 from util import zip_draft, is_windows_path
 from oss import upload_to_oss
-from typing import Dict, Literal
+from typing import Dict, Literal, Optional, List, Union
 from draft_cache import DRAFT_CACHE
 from save_task_cache import DRAFT_TASKS, get_task_status, update_tasks_cache, update_task_field, increment_task_field, update_task_fields, create_task
 from downloader import download_audio, download_file, download_image, download_video
@@ -555,6 +555,265 @@ def query_script_impl(draft_id: str, force_update: bool = True):
     
     # Return script object
     return script
+
+
+def summarize_draft(
+    draft_id: str,
+    *,
+    include_materials: bool = True,
+    max_text_len: int = 120,
+    force_update: bool = False,
+) -> str:
+    """Return a human-readable, API-level summary of the current draft state.
+
+    The summary reflects the abstractions used by the Python API (tracks, segments,
+    materials), while hiding low-level CapCut raw JSON details. Media are referenced
+    by ids and human-friendly names, preferring remote URLs where appropriate.
+
+    Args:
+        draft_id: Target draft id in cache.
+        include_materials: Whether to include a materials appendix.
+        max_text_len: Truncate long text contents to this many characters.
+        force_update: If True, refresh media metadata before summarizing.
+
+    Returns:
+        A multiline string summary.
+    """
+    # Fetch script from cache
+    script = query_script_impl(draft_id, force_update=force_update)
+    if script is None:
+        return f"Draft '{draft_id}' not found in cache."
+
+    # Helpers
+    def us_to_s_str(us_value: Optional[int]) -> str:
+        try:
+            if us_value is None:
+                return "0.000s"
+            return f"{(us_value / 1_000_000.0):.3f}s"
+        except Exception:
+            return str(us_value)
+
+    def fmt_timerange(tr: Optional['draft.Timerange']) -> str:
+        if tr is None:
+            return "n/a"
+        return f"{us_to_s_str(tr.start)} – {us_to_s_str(tr.end)} (dur {us_to_s_str(tr.duration)})"
+
+    def fmt_clip_settings(clip: Optional['draft.Clip_settings']) -> Optional[str]:
+        if clip is None:
+            return None
+        # Only show when non-default to avoid noise
+        non_default_bits: List[str] = []
+        if abs(clip.alpha - 1.0) > 1e-6:
+            non_default_bits.append(f"alpha={clip.alpha:.2f}")
+        if clip.flip_horizontal:
+            non_default_bits.append("flipH")
+        if clip.flip_vertical:
+            non_default_bits.append("flipV")
+        if abs(clip.rotation) > 1e-6:
+            non_default_bits.append(f"rot={clip.rotation:.1f}deg")
+        if abs(clip.scale_x - 1.0) > 1e-6 or abs(clip.scale_y - 1.0) > 1e-6:
+            non_default_bits.append(f"scale={clip.scale_x:.2f}x,{clip.scale_y:.2f}y")
+        if abs(clip.transform_x) > 1e-6 or abs(clip.transform_y) > 1e-6:
+            non_default_bits.append(f"pos=({clip.transform_x:.2f},{clip.transform_y:.2f})")
+        return ", ".join(non_default_bits) if non_default_bits else None
+
+    def indent(lines: List[str], level: int = 1) -> List[str]:
+        prefix = "    " * level
+        return [prefix + l for l in lines]
+
+    lines: List[str] = []
+    # Header
+    lines.append(f"Draft {draft_id}")
+    lines.append(f"- Canvas: {script.width}x{script.height} @ {script.fps}fps")
+    lines.append(f"- Duration: {us_to_s_str(script.duration)}")
+
+    # Tracks overview (sorted by render order, as exported)
+    track_list: List['draft.Base_track'] = list(script.tracks.values())
+    track_list.extend(getattr(script, 'imported_tracks', []))
+    track_list.sort(key=lambda t: t.render_index)
+
+    lines.append("Tracks:")
+    if not track_list:
+        lines.extend(indent(["(none)"]))
+    else:
+        for track in track_list:
+            t_type = track.track_type.name
+            t_name = track.name
+            t_info = f"[{t_type}] '{t_name}' (render_index={track.render_index}, mute={'yes' if getattr(track, 'mute', False) else 'no'})"
+            lines.extend(indent([t_info]))
+
+            segs: List['draft.Base_segment'] = getattr(track, 'segments', [])
+            if not segs:
+                lines.extend(indent(["segments: (none)"], 2))
+                continue
+
+            for idx, seg in enumerate(segs):
+                seg_header: str = f"#{idx+1}: "
+                # Video/Image segment
+                if isinstance(seg, draft.Video_segment):
+                    material = seg.material_instance
+                    m_kind = material.material_type
+                    m_name = getattr(material, 'material_name', '')
+                    ref = material.remote_url or material.path or ''
+                    seg_header += f"VideoSegment {m_kind} id={material.material_id} name='{m_name}'"
+                    lines.extend(indent([seg_header], 2))
+
+                    details: List[str] = [
+                        f"target={fmt_timerange(seg.target_timerange)}",
+                        f"source={fmt_timerange(seg.source_timerange)}",
+                        f"speed={getattr(seg.speed, 'speed', 1.0):.3f}, volume={seg.volume:.2f}",
+                    ]
+                    if material.width and material.height:
+                        details.append(f"media_size={material.width}x{material.height}")
+                    if ref:
+                        details.append(f"ref={ref}")
+                    clip_desc = fmt_clip_settings(seg.clip_settings)
+                    if clip_desc:
+                        details.append(f"clip[{clip_desc}]")
+                    if seg.animations_instance is not None:
+                        details.append("animations=present")
+                    if seg.effects:
+                        details.append("effects=" + ", ".join(e.name for e in seg.effects))
+                    if seg.filters:
+                        details.append("filters=" + ", ".join(f.effect_meta.name for f in seg.filters))
+                    if seg.mask is not None:
+                        details.append(f"mask={seg.mask.mask_meta.name}")
+                    if seg.transition is not None:
+                        details.append(f"transition={seg.transition.name}")
+                    if seg.background_filling is not None:
+                        details.append(f"background={seg.background_filling.fill_type}")
+                    # Keyframes summary
+                    if seg.common_keyframes:
+                        kf_summ = ", ".join(
+                            f"{kf_list.keyframe_property.name}:{len(kf_list.keyframes)}" for kf_list in seg.common_keyframes
+                        )
+                        details.append(f"keyframes=({kf_summ})")
+                    lines.extend(indent(details, 3))
+
+                # Audio segment
+                elif isinstance(seg, draft.Audio_segment):
+                    material = seg.material_instance
+                    m_name = getattr(material, 'material_name', '')
+                    ref = material.remote_url or material.path or ''
+                    seg_header += f"AudioSegment id={material.material_id} name='{m_name}'"
+                    lines.extend(indent([seg_header], 2))
+
+                    details = [
+                        f"target={fmt_timerange(seg.target_timerange)}",
+                        f"source={fmt_timerange(seg.source_timerange)}",
+                        f"speed={getattr(seg.speed, 'speed', 1.0):.3f}, volume={seg.volume:.2f}",
+                        f"media_dur={us_to_s_str(material.duration)}",
+                    ]
+                    if ref:
+                        details.append(f"ref={ref}")
+                    if seg.fade is not None:
+                        details.append(
+                            f"fade=in {us_to_s_str(seg.fade.in_duration)}, out {us_to_s_str(seg.fade.out_duration)}"
+                        )
+                    if seg.effects:
+                        details.append("effects=" + ", ".join(e.name for e in seg.effects))
+                    # Keyframes summary
+                    if seg.common_keyframes:
+                        kf_summ = ", ".join(
+                            f"{kf_list.keyframe_property.name}:{len(kf_list.keyframes)}" for kf_list in seg.common_keyframes
+                        )
+                        details.append(f"keyframes=({kf_summ})")
+                    lines.extend(indent(details, 3))
+
+                # Text segment
+                elif isinstance(seg, draft.Text_segment):
+                    text = seg.text.replace("\n", " ")
+                    if len(text) > max_text_len:
+                        text = text[:max_text_len - 1] + "…"
+                    seg_header += f"TextSegment id={seg.material_id} text=\"{text}\""
+                    lines.extend(indent([seg_header], 2))
+
+                    details = [
+                        f"target={fmt_timerange(seg.target_timerange)}",
+                        f"font={(seg.font.name if getattr(seg, 'font', None) else 'system')} size={seg.style.size}",
+                        f"align={seg.style.align} vertical={seg.style.vertical}",
+                    ]
+                    clip_desc = fmt_clip_settings(seg.clip_settings)
+                    if clip_desc:
+                        details.append(f"clip[{clip_desc}]")
+                    if seg.bubble is not None:
+                        details.append("bubble=present")
+                    if seg.effect is not None:
+                        details.append("text_effect=present")
+                    if seg.background is not None:
+                        details.append("background=present")
+                    if seg.border is not None:
+                        details.append("border=present")
+                    if seg.shadow is not None and seg.shadow.has_shadow:
+                        details.append("shadow=present")
+                    if seg.common_keyframes:
+                        kf_summ = ", ".join(
+                            f"{kf_list.keyframe_property.name}:{len(kf_list.keyframes)}" for kf_list in seg.common_keyframes
+                        )
+                        details.append(f"keyframes=({kf_summ})")
+                    lines.extend(indent(details, 3))
+
+                # Filter track segment
+                elif isinstance(seg, draft.Filter_segment):
+                    seg_header += f"Filter '{seg.material.effect_meta.name}'"
+                    lines.extend(indent([seg_header], 2))
+                    details = [f"target={fmt_timerange(seg.target_timerange)}", f"intensity={seg.material.intensity:.2f}"]
+                    lines.extend(indent(details, 3))
+
+                # Effect track segment
+                elif isinstance(seg, draft.Effect_segment):
+                    seg_header += f"Effect '{seg.effect_inst.name}'"
+                    lines.extend(indent([seg_header], 2))
+                    details = [f"target={fmt_timerange(seg.target_timerange)}", f"apply={'global' if seg.effect_inst.apply_target_type == 2 else 'clip'}"]
+                    lines.extend(indent(details, 3))
+
+                else:
+                    # Imported or unknown segment: show minimal info
+                    tr = getattr(seg, 'target_timerange', None)
+                    seg_header += f"ImportedSegment material_id={getattr(seg, 'material_id', '')}"
+                    lines.extend(indent([seg_header], 2))
+                    lines.extend(indent([f"target={fmt_timerange(tr)}"], 3))
+
+    # Materials appendix
+    if include_materials:
+        lines.append("Materials:")
+        mats = getattr(script, 'materials', None)
+        if mats is None:
+            lines.extend(indent(["(none)"]))
+        else:
+            # Videos/Images
+            vids = getattr(mats, 'videos', [])
+            if vids:
+                lines.extend(indent(["Videos/Images:"]))
+                for v in vids:
+                    ref = v.remote_url or v.path or ''
+                    lines.extend(indent([
+                        f"id={v.material_id} name='{v.material_name}' type={v.material_type} size={v.width}x{v.height} dur={us_to_s_str(v.duration)}",
+                        f"ref={ref}" if ref else ""
+                    ], 2))
+            # Audios
+            auds = getattr(mats, 'audios', [])
+            if auds:
+                lines.extend(indent(["Audios:"]))
+                for a in auds:
+                    ref = a.remote_url or a.path or ''
+                    lines.extend(indent([
+                        f"id={a.material_id} name='{a.material_name}' dur={us_to_s_str(a.duration)}",
+                        f"ref={ref}" if ref else ""
+                    ], 2))
+            # Texts summary (count only; contents are shown per segment)
+            txts = getattr(mats, 'texts', [])
+            if txts:
+                lines.extend(indent([f"Texts: {len(txts)} entries (see segments)"]))
+            # Effects/filters counts
+            if getattr(mats, 'video_effects', []):
+                lines.extend(indent([f"Video effects: {len(mats.video_effects)}"]))
+            if getattr(mats, 'filters', []):
+                lines.extend(indent([f"Filters: {len(mats.filters)}"]))
+
+    # Remove empty trailing lines
+    lines = [l for l in lines if l.strip() != ""]
+    return "\n".join(lines)
 
 def download_script(draft_id: str, draft_folder: str = None, script_data: Dict = None) -> Dict[str, str]:
     """Downloads the draft script and its associated media assets.

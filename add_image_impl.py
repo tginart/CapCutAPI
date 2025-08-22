@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse, unquote
 import uuid
 import pyJianYingDraft as draft
 import time
@@ -110,8 +111,29 @@ def add_image_impl(
     else:
         script.add_track(draft.Track_type.video, relative_index=relative_index)
     
-    # Generate material_name but don't download the image
-    material_name = f"image_{url_to_hash(image_url)}.png"
+    # Determine if input is a local file path (or file:// URI) vs remote URL
+    local_path = None
+    if isinstance(image_url, str):
+        if image_url.startswith("file://"):
+            parsed = urlparse(image_url)
+            local_path = os.path.abspath(unquote(parsed.path))
+        elif os.path.exists(image_url) and os.path.isfile(image_url):
+            local_path = os.path.abspath(image_url)
+
+    # Build material_name and remote spec
+    if local_path:
+        # Only support common image formats; fail fast for others
+        _, ext = os.path.splitext(local_path)
+        ext = ext.lower()
+        supported_image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'}
+        if ext not in supported_image_exts:
+            raise ValueError(f"Only image files with extensions {supported_image_exts} are supported, got '{ext}'")
+        material_name = os.path.basename(local_path)
+        remote_spec = local_path
+    else:
+        # For remote URLs, keep previous hashing scheme and .png extension
+        material_name = f"image_{url_to_hash(image_url)}.png"
+        remote_spec = image_url
     
     # Build draft_image_path
     draft_image_path = None
@@ -133,9 +155,9 @@ def add_image_impl(
     
     # Create image material
     if draft_image_path:
-        image_material = draft.Video_material(path=None, material_type='photo', replace_path=draft_image_path, remote_url=image_url, material_name=material_name)
+        image_material = draft.Video_material(path=None, material_type='photo', replace_path=draft_image_path, remote_url=remote_spec, material_name=material_name)
     else:
-        image_material = draft.Video_material(path=None, material_type='photo', remote_url=image_url, material_name=material_name)
+        image_material = draft.Video_material(path=None, material_type='photo', remote_url=remote_spec, material_name=material_name)
     
     # Create target_timerange (image)
     duration = end - start

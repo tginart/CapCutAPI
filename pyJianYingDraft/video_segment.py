@@ -1,6 +1,6 @@
-"""定义视频片段及其相关类
+"""Define video segments and related classes
 
-包含图像调节设置、动画效果、特效、转场等相关类
+Includes classes for image adjustment settings, animations, effects, transitions, etc.
 """
 
 import uuid
@@ -26,17 +26,17 @@ from .metadata import Video_scene_effect_type, Video_character_effect_type
 
 
 class Mask:
-    """蒙版对象"""
+    """Mask object"""
 
     mask_meta: Mask_meta
-    """蒙版元数据"""
+    """Mask metadata"""
     global_id: str
-    """蒙版全局id, 由程序自动生成"""
+    """Global mask id, auto-generated"""
 
     center_x: float
-    """蒙版中心x坐标, 以半素材宽为单位"""
+    """Mask center x-coordinate, in units of half material width"""
     center_y: float
-    """蒙版中心y坐标, 以半素材高为单位"""
+    """Mask center y-coordinate, in units of half material height"""
     width: float
     height: float
     aspect_ratio: float
@@ -44,9 +44,9 @@ class Mask:
     rotation: float
     invert: bool
     feather: float
-    """羽化程度, 0-1"""
+    """Feather amount, 0-1"""
     round_corner: float
-    """矩形蒙版的圆角, 0-1"""
+    """Corner radius for rectangular mask, 0-1"""
 
     def __init__(self, mask_meta: Mask_meta,
                  cx: float, cy: float, w: float, h: float,
@@ -86,31 +86,31 @@ class Mask:
             "resource_type": self.mask_meta.resource_type,
             "resource_id": self.mask_meta.resource_id,
             "type": "mask"
-            # 不导出path字段
+            # Do not export the path field
         }
 
 class Video_effect:
-    """视频特效素材"""
+    """Video effect material"""
 
     name: str
-    """特效名称"""
+    """Effect name"""
     global_id: str
-    """特效全局id, 由程序自动生成"""
+    """Effect global id, auto-generated"""
     effect_id: str
-    """某种特效id, 由剪映本身提供"""
+    """Effect id, provided by CapCut"""
     resource_id: str
-    """资源id, 由剪映本身提供"""
+    """Resource id, provided by CapCut"""
 
     effect_type: Literal["video_effect", "face_effect"]
     apply_target_type: Literal[0, 2]
-    """应用目标类型, 0: 片段, 2: 全局"""
+    """Apply target type, 0: clip, 2: global"""
 
     adjust_params: List[Effect_param_instance]
 
     def __init__(self, effect_meta: Union[Video_scene_effect_type, Video_character_effect_type],
                  params: Optional[List[Optional[float]]] = None, *,
                  apply_target_type: Literal[0, 2] = 0):
-        """根据给定的特效元数据及参数列表构造一个视频特效对象, params的范围是0~100"""
+        """Construct a video effect object from the given effect metadata and parameter list; params range is 0-100"""
 
         self.name = effect_meta.value.name
         self.global_id = uuid.uuid4().hex
@@ -142,8 +142,8 @@ class Video_effect:
             "adjust_params": [param.export_json() for param in self.adjust_params],
             "apply_target_type": self.apply_target_type,
             "apply_time_range": None,
-            "category_id": "",  # 一律设为空
-            "category_name": "",  # 一律设为空
+            "category_id": "",  # Always set empty
+            "category_name": "",  # Always set empty
             "common_keyframes": [],
             "disable_effect_faces": [],
             "effect_id": self.effect_id,
@@ -159,26 +159,26 @@ class Video_effect:
             "type": self.effect_type,
             "value": 1.0,
             "version": ""
-            # 不导出path、request_id和algorithm_artifact_path字段
+            # Do not export the fields path, request_id, and algorithm_artifact_path
         }
 
 class Filter:
-    """滤镜素材"""
+    """Filter material"""
 
     global_id: str
-    """滤镜全局id, 由程序自动生成"""
+    """Filter global id, auto-generated"""
 
     effect_meta: Effect_meta
-    """滤镜的元数据"""
+    """Filter metadata"""
     intensity: float
-    """滤镜强度(滤镜的唯一参数)"""
+    """Filter intensity (the only parameter)"""
 
     apply_target_type: Literal[0, 2]
-    """应用目标类型, 0: 片段, 2: 全局"""
+    """Apply target type, 0: clip, 2: global"""
 
     def __init__(self, meta: Effect_meta, intensity: float, *,
                  apply_target_type: Literal[0, 2] = 0):
-        """根据给定的滤镜元数据及强度构造滤镜素材对象"""
+        """Construct a filter material object from the given filter metadata and intensity"""
 
         self.global_id = uuid.uuid4().hex
         self.effect_meta = meta
@@ -191,8 +191,8 @@ class Filter:
             "algorithm_artifact_path": "",
             "apply_target_type": self.apply_target_type,
             "bloom_params": None,
-            "category_id": "",  # 一律设为空
-            "category_name": "",  # 一律设为空
+            "category_id": "",  # Always set empty
+            "category_name": "",  # Always set empty
             "color_match_info": {
                 "source_feature_path": "",
                 "target_feature_path": "",
@@ -216,28 +216,28 @@ class Filter:
             "type": "filter",
             "value": self.intensity,
             "version": ""
-            # 不导出path和request_id
+            # Do not export path and request_id
         }
 
 class Transition:
-    """转场对象"""
+    """Transition object"""
 
     name: str
-    """转场名称"""
+    """Transition name"""
     global_id: str
-    """转场全局id, 由程序自动生成"""
+    """Transition global id, auto-generated"""
     effect_id: str
-    """转场效果id, 由剪映本身提供"""
+    """Transition effect id, provided by CapCut"""
     resource_id: str
-    """资源id, 由剪映本身提供"""
+    """Resource id, provided by CapCut"""
 
     duration: int
-    """转场持续时间, 单位为微秒"""
+    """Transition duration, in microseconds"""
     is_overlap: bool
-    """是否与上一个片段重叠(?)"""
+    """Whether it overlaps with the previous clip (?)"""
 
     def __init__(self, effect_meta: Union[Transition_type, CapCut_Transition_type], duration: Optional[int] = None):
-        """根据给定的转场元数据及持续时间构造一个转场对象"""
+        """Construct a transition object from the given transition metadata and duration"""
         self.name = effect_meta.value.name
         self.global_id = uuid.uuid4().hex
         self.effect_id = effect_meta.value.effect_id
@@ -248,8 +248,8 @@ class Transition:
 
     def export_json(self) -> Dict[str, Any]:
         return {
-            "category_id": "",  # 一律设为空
-            "category_name": "",  # 一律设为空
+            "category_id": "",  # Always set empty
+            "category_name": "",  # Always set empty
             "duration": self.duration,
             "effect_id": self.effect_id,
             "id": self.global_id,
@@ -258,20 +258,20 @@ class Transition:
             "platform": "all",
             "resource_id": self.resource_id,
             "type": "transition"
-            # 不导出path和request_id字段
+            # Do not export path and request_id fields
         }
 
 class BackgroundFilling:
-    """背景填充对象"""
+    """Background filling object"""
 
     global_id: str
-    """背景填充全局id, 由程序自动生成"""
+    """Background filling global id, auto-generated"""
     fill_type: Literal["canvas_blur", "canvas_color"]
-    """背景填充类型"""
+    """Background filling type"""
     blur: float
-    """模糊程度, 0-1"""
+    """Blur amount, 0-1"""
     color: str
-    """背景颜色, 格式为'#RRGGBBAA'"""
+    """Background color, format '#RRGGBBAA'"""
 
     def __init__(self, fill_type: Literal["canvas_blur", "canvas_color"], blur: float, color: str):
         self.global_id = uuid.uuid4().hex
@@ -289,60 +289,60 @@ class BackgroundFilling:
         }
 
 class Video_segment(Visual_segment):
-    """安放在轨道上的一个视频/图片片段"""
+    """A video/image segment placed on a track"""
 
     material_instance: Video_material
-    """素材实例"""
+    """Material instance"""
     material_size: Tuple[int, int]
-    """素材尺寸"""
+    """Material size"""
 
     effects: List[Video_effect]
-    """特效列表
+    """Effects list
 
-    在放入轨道时自动添加到素材列表中
+    Automatically added to the materials list when placed on a track
     """
     filters: List[Filter]
-    """滤镜列表
+    """Filters list
 
-    在放入轨道时自动添加到素材列表中
+    Automatically added to the materials list when placed on a track
     """
     mask: Optional[Mask]
-    """蒙版实例, 可能为空
+    """Mask instance, may be None
 
-    在放入轨道时自动添加到素材列表中
+    Automatically added to the materials list when placed on a track
     """
     transition: Optional[Transition]
-    """转场实例, 可能为空
+    """Transition instance, may be None
 
-    在放入轨道时自动添加到素材列表中
+    Automatically added to the materials list when placed on a track
     """
     background_filling: Optional[BackgroundFilling]
-    """背景填充实例, 可能为空
+    """Background filling instance, may be None
 
-    在放入轨道时自动添加到素材列表中
+    Automatically added to the materials list when placed on a track
     """
 
     visible: Optional[bool]
-    """是否可见
-    默认为True
+    """Whether visible
+    Defaults to True
     """
 
-    # TODO: material参数接受path进行便捷构造
+    # TODO: Allow the material parameter to accept a path for convenient construction
     def __init__(self, material: Video_material, target_timerange: Timerange, *,
                  source_timerange: Optional[Timerange] = None, speed: Optional[float] = None, volume: float = 1.0,
                  clip_settings: Optional[Clip_settings] = None):
-        """利用给定的视频/图片素材构建一个轨道片段, 并指定其时间信息及图像调节设置
+        """Construct a track segment using the given video/image material, specifying timing and image adjustment settings
 
         Args:
-            material (`Video_material`): 素材实例
-            target_timerange (`Timerange`): 片段在轨道上的目标时间范围
-            source_timerange (`Timerange`, optional): 截取的素材片段的时间范围, 默认从开头根据`speed`截取与`target_timerange`等长的一部分
-            speed (`float`, optional): 播放速度, 默认为1.0. 此项与`source_timerange`同时指定时, 将覆盖`target_timerange`中的时长
-            volume (`float`, optional): 音量, 默认为1.0
-            clip_settings (`Clip_settings`, optional): 图像调节设置, 默认不作任何变换
+            material (`Video_material`): Material instance
+            target_timerange (`Timerange`): Target time range of the segment on the track
+            source_timerange (`Timerange`, optional): Time range of the clipped portion of the material. By default, starting from the beginning, clip a portion whose length equals `target_timerange`, determined by `speed`.
+            speed (`float`, optional): Playback speed, default 1.0. When specified together with `source_timerange`, overrides the duration in `target_timerange`.
+            volume (`float`, optional): Volume, default 1.0
+            clip_settings (`Clip_settings`, optional): Image adjustment settings, no transformation by default
 
         Raises:
-            `ValueError`: 指定的或计算出的`source_timerange`超出了素材的时长范围
+            `ValueError`: The specified or computed `source_timerange` exceeds the material duration
         """
         # if source_timerange is not None and speed is not None:
         #     target_timerange = Timerange(target_timerange.start, round(source_timerange.duration / speed))
@@ -354,7 +354,7 @@ class Video_segment(Visual_segment):
 
         # if source_timerange.end > material.duration:
         #     source_timerange = Timerange(source_timerange.start, material.duration - source_timerange.start)
-        #     # 重新计算目标时间范围
+        #     # Recalculate the target time range
         #     target_timerange = Timerange(target_timerange.start, round(source_timerange.duration / speed))
 
         super().__init__(material.material_id, source_timerange, target_timerange, speed, volume, clip_settings=clip_settings)
@@ -369,12 +369,12 @@ class Video_segment(Visual_segment):
 
     def add_animation(self, animation_type: Union[Intro_type, Outro_type, Group_animation_type, CapCut_Intro_type, CapCut_Outro_type, CapCut_Group_animation_type],
                       duration: Optional[Union[int, str]] = None) -> "Video_segment":
-        """将给定的入场/出场/组合动画添加到此片段的动画列表中
+        """Add the given intro/outro/group animation to this segment's animation list
 
         Args:
-            animation_type (`Intro_type`, `Outro_type`, or `Group_animation_type`): 动画类型
-            duration (`int` or `str`, optional): 动画持续时间, 单位为微秒. 若传入字符串则会调用`tim()`函数进行解析.
-                若不指定则使用动画类型定义的默认值. 理论上只适用于入场和出场动画.
+            animation_type (`Intro_type`, `Outro_type`, or `Group_animation_type`): Animation type
+            duration (`int` or `str`, optional): Animation duration in microseconds. If a string is provided, it is parsed by `tim()`.
+                If unspecified, uses the default defined by the animation type. In principle, applies only to intro and outro animations.
         """
         if duration is not None:
             duration = tim(duration)
@@ -400,18 +400,18 @@ class Video_segment(Visual_segment):
 
     def add_effect(self, effect_type: Union[Video_scene_effect_type, Video_character_effect_type],
                    params: Optional[List[Optional[float]]] = None) -> "Video_segment":
-        """为视频片段添加一个作用于整个片段的特效
+        """Add an effect that applies to the entire video segment
 
         Args:
-            effect_type (`Video_scene_effect_type` or `Video_character_effect_type`): 特效类型
-            params (`List[Optional[float]]`, optional): 特效参数列表, 参数列表中未提供或为None的项使用默认值.
-                参数取值范围(0~100)与剪映中一致. 某个特效类型有何参数以及具体参数顺序以枚举类成员的annotation为准.
+            effect_type (`Video_scene_effect_type` or `Video_character_effect_type`): Effect type
+            params (`List[Optional[float]]`, optional): Effect parameter list. Items not provided or set to None use default values.
+                Parameter range (0-100) matches CapCut. For a given effect type, which parameters exist and their order are defined by the enum member's annotations.
 
         Raises:
-            `ValueError`: 提供的参数数量超过了该特效类型的参数数量, 或参数值超出范围.
+            `ValueError`: Provided parameter count exceeds the number of parameters for the effect type, or parameter values are out of range.
         """
         if params is not None and len(params) > len(effect_type.value.params):
-            raise ValueError("为音频效果 %s 传入了过多的参数" % effect_type.value.name)
+            raise ValueError("Too many parameters passed for audio effect %s" % effect_type.value.name)
 
         effect_inst = Video_effect(effect_type, params)
         self.effects.append(effect_inst)
@@ -420,13 +420,13 @@ class Video_segment(Visual_segment):
         return self
 
     def add_filter(self, filter_type: Filter_type, intensity: float = 100.0) -> "Video_segment":
-        """为视频片段添加一个滤镜
+        """Add a filter to the video segment
 
         Args:
-            filter_type (`Filter_type`): 滤镜类型
-            intensity (`float`, optional): 滤镜强度(0-100), 仅当所选滤镜能够调节强度时有效. 默认为100.
+            filter_type (`Filter_type`): Filter type
+            intensity (`float`, optional): Filter intensity (0-100). Effective only when the selected filter supports intensity adjustment. Defaults to 100.
         """
-        filter_inst = Filter(filter_type.value, intensity / 100.0)  # 转化为0~1范围
+        filter_inst = Filter(filter_type.value, intensity / 100.0)  # Convert to the 0~1 range
         self.filters.append(filter_inst)
         self.extra_material_refs.append(filter_inst.global_id)
 
@@ -435,33 +435,33 @@ class Video_segment(Visual_segment):
     def add_mask(self, draft: "Script_file", mask_type: Union[Mask_type, CapCut_Mask_type], *, center_x: float = 0.0, center_y: float = 0.0, size: float = 0.5,
                  rotation: float = 0.0, feather: float = 0.0, invert: bool = False,
                  rect_width: Optional[float] = None, round_corner: Optional[float] = None) -> "Video_segment":
-        """为视频片段添加蒙版
+        """Add a mask to the video segment
 
         Args:
-            mask_type (`Mask_type`): 蒙版类型
-            center_x (`float`, optional): 蒙版中心点X坐标(以素材的像素为单位), 默认设置在素材中心
-            center_y (`float`, optional): 蒙版中心点Y坐标(以素材的像素为单位), 默认设置在素材中心
-            size (`float`, optional): 蒙版的"主要尺寸"(镜面的可视部分高度/圆形直径/爱心高度等), 以占素材高度的比例表示, 默认为0.5
-            rotation (`float`, optional): 蒙版顺时针旋转的**角度**, 默认不旋转
-            feather (`float`, optional): 蒙版的羽化参数, 取值范围0~100, 默认无羽化
-            invert (`bool`, optional): 是否反转蒙版, 默认不反转
-            rect_width (`float`, optional): 矩形蒙版的宽度, 仅在蒙版类型为矩形时允许设置, 以占素材宽度的比例表示, 默认与`size`相同
-            round_corner (`float`, optional): 矩形蒙版的圆角参数, 仅在蒙版类型为矩形时允许设置, 取值范围0~100, 默认为0
+            mask_type (`Mask_type`): Mask type
+            center_x (`float`, optional): X coordinate of the mask center (in material pixels). Defaults to the material center
+            center_y (`float`, optional): Y coordinate of the mask center (in material pixels). Defaults to the material center
+            size (`float`, optional): The "primary size" of the mask (visible part height for mirror/circle diameter/heart height, etc.), expressed as a proportion of material height. Defaults to 0.5
+            rotation (`float`, optional): Clockwise rotation angle of the mask. Defaults to no rotation
+            feather (`float`, optional): Feather parameter of the mask, range 0-100. Defaults to no feathering
+            invert (`bool`, optional): Whether to invert the mask. Defaults to False
+            rect_width (`float`, optional): Width of the rectangular mask. Allowed only when the mask type is rectangular, expressed as a proportion of material width. Defaults to the same as `size`
+            round_corner (`float`, optional): Corner radius parameter for rectangular masks. Allowed only when the mask type is rectangular, range 0-100. Defaults to 0
 
         Raises:
-            `ValueError`: 试图添加多个蒙版或不正确地设置了`rect_width`及`round_corner`
+            `ValueError`: Attempted to add multiple masks or incorrectly set `rect_width` and `round_corner`
         """
 
         if self.mask is not None:
-            raise ValueError("当前片段已有蒙版, 不能再添加新的蒙版")
+            raise ValueError("This segment already has a mask and cannot add another")
         if (rect_width is not None or round_corner is not None) and (mask_type != Mask_type.矩形 and mask_type != CapCut_Mask_type.Rectangle):
-            raise ValueError("`rect_width` 以及 `round_corner` 仅在蒙版类型为矩形时允许设置")
+            raise ValueError("`rect_width` and `round_corner` are only allowed when the mask type is rectangular")
         if rect_width is None and (mask_type == Mask_type.矩形 or mask_type == CapCut_Mask_type.Rectangle):
             rect_width = size
         if round_corner is None:
             round_corner = 0
 
-        # 获取草稿的宽高，而不是使用素材的宽高
+        # Get the draft width and height, instead of using the material's
         draft_width = draft.width
         draft_height = draft.height
         
@@ -473,17 +473,17 @@ class Video_segment(Visual_segment):
         return self
 
     def add_transition(self, transition_type: Union[Transition_type, CapCut_Transition_type], *, duration: Optional[Union[int, str]] = None) -> "Video_segment":
-        """为视频片段添加转场, 注意转场应当添加在**前面的**片段上
+        """Add a transition to the video segment. Note: the transition should be added to the previous segment
 
         Args:
-            transition_type (`Transition_type` or `CapCut_Transition_type`): 转场类型
-            duration (`int` or `str`, optional): 转场持续时间, 单位为微秒. 若传入字符串则会调用`tim()`函数进行解析. 若不指定则使用转场类型定义的默认值.
+            transition_type (`Transition_type` or `CapCut_Transition_type`): Transition type
+            duration (`int` or `str`, optional): Transition duration in microseconds. If a string is provided, it is parsed by `tim()`. If unspecified, uses the default defined by the transition type.
 
         Raises:
-            `ValueError`: 试图添加多个转场.
+            `ValueError`: Attempted to add multiple transitions.
         """
         if self.transition is not None:
-            raise ValueError("当前片段已有转场, 不能再添加新的转场")
+            raise ValueError("This segment already has a transition and cannot add another")
         if isinstance(duration, str): duration = tim(duration)
 
         self.transition = Transition(transition_type, duration)
@@ -491,27 +491,27 @@ class Video_segment(Visual_segment):
         return self
 
     def add_background_filling(self, fill_type: Literal["blur", "color"], blur: float = 0.0625, color: str = "#00000000") -> "Video_segment":
-        """为视频片段添加背景填充
+        """Add background filling to the video segment
 
-        注意: 背景填充仅对底层视频轨道上的片段生效
+        Note: Background filling only takes effect for segments on the bottom video track
 
         Args:
-            fill_type (`blur` or `color`): 填充类型, `blur`表示模糊, `color`表示颜色.
-            blur (`float`, optional): 模糊程度, 0.0-1.0. 仅在`fill_type`为`blur`时有效. 剪映中的四档模糊数值分别为0.0625, 0.375, 0.75和1.0, 默认为0.0625.
-            color (`str`, optional): 填充颜色, 格式为'#RRGGBBAA'. 仅在`fill_type`为`color`时有效.
+            fill_type (`blur` or `color`): Filling type. `blur` means blur, `color` means color.
+            blur (`float`, optional): Blur amount, 0.0-1.0. Effective only when `fill_type` is `blur`. The four blur levels in CapCut are 0.0625, 0.375, 0.75, and 1.0. Defaults to 0.0625.
+            color (`str`, optional): Fill color, format '#RRGGBBAA'. Effective only when `fill_type` is `color`.
 
         Raises:
-            `ValueError`: 当前片段已有背景填充效果或`fill_type`无效.
+            `ValueError`: The segment already has a background filling effect or `fill_type` is invalid.
         """
         if self.background_filling is not None:
-            raise ValueError("当前片段已有背景填充效果")
+            raise ValueError("This segment already has a background filling effect")
 
         if fill_type == "blur":
             self.background_filling = BackgroundFilling("canvas_blur", blur, color)
         elif fill_type == "color":
             self.background_filling = BackgroundFilling("canvas_color", blur, color)
         else:
-            raise ValueError(f"无效的背景填充类型 {fill_type}")
+            raise ValueError(f"Invalid background filling type {fill_type}")
 
         self.extra_material_refs.append(self.background_filling.global_id)
         return self
@@ -524,26 +524,26 @@ class Video_segment(Visual_segment):
         return json_dict
 
 class Sticker_segment(Visual_segment):
-    """安放在轨道上的一个贴纸片段"""
+    """A sticker segment placed on a track"""
 
     resource_id: str
-    """贴纸资源id"""
+    """Sticker resource id"""
 
     def __init__(self, resource_id: str, target_timerange: Timerange, *, clip_settings: Optional[Clip_settings] = None):
-        """根据贴纸resource_id构建一个贴纸片段, 并指定其时间信息及图像调节设置
+        """Construct a sticker segment from the sticker resource_id and specify its timing and image adjustment settings
 
-        片段创建完成后, 可通过`Script_file.add_segment`方法将其添加到轨道中
+        After creating the segment, you can add it to the track via `Script_file.add_segment`
 
         Args:
-            resource_id (`str`): 贴纸resource_id, 可通过`Script_file.inspect_material`从模板中获取
-            target_timerange (`Timerange`): 片段在轨道上的目标时间范围
-            clip_settings (`Clip_settings`, optional): 图像调节设置, 默认不作任何变换
+            resource_id (`str`): Sticker resource_id, obtainable from the template via `Script_file.inspect_material`
+            target_timerange (`Timerange`): Target time range of the segment on the track
+            clip_settings (`Clip_settings`, optional): Image adjustment settings, no transformation by default
         """
         super().__init__(uuid.uuid4().hex, None, target_timerange, 1.0, 1.0, clip_settings=clip_settings)
         self.resource_id = resource_id
 
     def export_material(self) -> Dict[str, Any]:
-        """创建极简的贴纸素材对象, 以此不再单独定义贴纸素材类"""
+        """Create a minimal sticker material object, avoiding a separate sticker material class"""
         return {
             "id": self.material_id,
             "resource_id": self.resource_id,

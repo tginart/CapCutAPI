@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse, unquote
 import pyJianYingDraft as draft
 import time
 from settings.local import IS_CAPCUT_ENV
@@ -118,8 +119,28 @@ def add_video_track(
         
         # video_duration = duration_result["output"]
     
-    # Generate local filename
-    material_name = f"video_{url_to_hash(video_url)}.mp4"
+    # Determine if input is a local file path (or file:// URI) vs remote URL
+    local_path = None
+    if isinstance(video_url, str):
+        if video_url.startswith("file://"):
+            parsed = urlparse(video_url)
+            local_path = os.path.abspath(unquote(parsed.path))
+        elif os.path.exists(video_url) and os.path.isfile(video_url):
+            local_path = os.path.abspath(video_url)
+
+    # Build material_name and remote spec
+    if local_path:
+        # Only support mp4 local files per request; fail fast for others
+        _, ext = os.path.splitext(local_path)
+        ext = ext.lower()
+        if ext != ".mp4":
+            raise ValueError(f"Only local .mp4 files are supported, got '{ext}'")
+        material_name = os.path.basename(local_path)
+        remote_spec = local_path
+    else:
+        # For remote URLs, keep previous hashing scheme and .mp4 extension
+        material_name = f"video_{url_to_hash(video_url)}.mp4"
+        remote_spec = video_url
     # local_video_path = download_video(video_url, draft_dir)
     
     # Build draft_video_path
@@ -150,9 +171,9 @@ def add_video_track(
     
     # Create video clip
     if draft_video_path:
-        video_material = draft.Video_material(material_type='video', replace_path=draft_video_path, remote_url=video_url, material_name=material_name, duration=video_duration, width=0, height=0)
+        video_material = draft.Video_material(material_type='video', replace_path=draft_video_path, remote_url=remote_spec, material_name=material_name, duration=video_duration, width=0, height=0)
     else:
-        video_material = draft.Video_material(material_type='video', remote_url=video_url, material_name=material_name, duration = video_duration, width=0, height=0)
+        video_material = draft.Video_material(material_type='video', remote_url=remote_spec, material_name=material_name, duration = video_duration, width=0, height=0)
     
     # Create source_timerange and target_timerange
     source_timerange = trange(f"{start}s", f"{source_duration}s")

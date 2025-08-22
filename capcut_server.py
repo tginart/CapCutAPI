@@ -25,7 +25,10 @@ from add_text_impl import add_text_impl
 from add_subtitle_impl import add_subtitle_impl
 from add_image_impl import add_image_impl
 from add_video_keyframe_impl import add_video_keyframe_impl
-from save_draft_impl import save_draft_impl, query_task_status, query_script_impl
+from save_draft_impl import save_draft_impl, query_task_status, query_script_impl, summarize_draft, download_script
+from create_draft import get_or_create_draft
+from clone_draft import clone_draft
+from list_drafts import list_drafts as list_drafts_func
 from add_effect_impl import add_effect_impl
 from add_sticker_impl import add_sticker_impl
 from create_draft import create_draft
@@ -221,6 +224,32 @@ def create_draft_service():
     except Exception as e:
         error_message = f"Error occurred while creating draft: {str(e)}."
         result["error"] = error_message
+        return jsonify(result)
+
+@app.route('/get_or_create_draft', methods=['POST'])
+def get_or_create_draft_service():
+    data = request.get_json()
+
+    draft_id = data.get('draft_id')
+    width = data.get('width', 1080)
+    height = data.get('height', 1920)
+
+    result = {
+        "success": False,
+        "output": "",
+        "error": ""
+    }
+
+    try:
+        generated_draft_id, script = get_or_create_draft(draft_id=draft_id, width=width, height=height)
+        result["success"] = True
+        result["output"] = {
+            "draft_id": generated_draft_id,
+            "draft_url": utilgenerate_draft_url(generated_draft_id)
+        }
+        return jsonify(result)
+    except Exception as e:
+        result["error"] = f"Error occurred while getting or creating draft: {str(e)}."
         return jsonify(result)
         
 @app.route('/add_subtitle', methods=['POST'])
@@ -803,7 +832,6 @@ def generate_draft_url():
     
     # Get required parameters
     draft_id = data.get('draft_id')
-    draft_folder = data.get('draft_folder')  # New draft_folder parameter
     
     result = {
         "success": False,
@@ -818,7 +846,7 @@ def generate_draft_url():
         return jsonify(result)
     
     try:
-        draft_result = { "draft_url" : f"{DRAFT_DOMAIN}{PREVIEW_ROUTER}?={draft_id}"}
+        draft_result = { "draft_url" : utilgenerate_draft_url(draft_id)}
         
         result["success"] = True
         result["output"] = draft_result
@@ -827,6 +855,117 @@ def generate_draft_url():
     except Exception as e:
         error_message = f"Error occurred while saving draft: {str(e)}."
         result["error"] = error_message
+        return jsonify(result)
+
+@app.route('/list_drafts', methods=['GET'])
+def list_drafts_service():
+    source_root = request.args.get('source_root')
+
+    result = {
+        "success": True,
+        "output": [],
+        "error": ""
+    }
+
+    try:
+        drafts = list_drafts_func(source_root=source_root)
+        result["output"] = drafts
+        return jsonify(result)
+    except Exception as e:
+        result["success"] = False
+        result["error"] = f"Error occurred while listing drafts: {str(e)}"
+        return jsonify(result)
+
+@app.route('/clone_draft', methods=['POST'])
+def clone_draft_service():
+    data = request.get_json()
+
+    source_draft_name = data.get('source_draft_name')
+    source_root = data.get('source_root')
+
+    result = {
+        "success": False,
+        "output": "",
+        "error": ""
+    }
+
+    if not source_draft_name:
+        result["error"] = "Hi, the required parameter 'source_draft_name' is missing. Please add it and try again."
+        return jsonify(result)
+
+    try:
+        script, draft_id = clone_draft(source_draft_name, source_root=source_root)
+        result["success"] = True
+        result["output"] = {
+            "draft_id": draft_id,
+            "draft_url": utilgenerate_draft_url(draft_id)
+        }
+        return jsonify(result)
+    except Exception as e:
+        result["error"] = f"Error occurred while cloning draft: {str(e)}."
+        return jsonify(result)
+
+@app.route('/summarize_draft', methods=['POST'])
+def summarize_draft_service():
+    data = request.get_json()
+
+    draft_id = data.get('draft_id')
+    include_materials = data.get('include_materials', True)
+    max_text_len = data.get('max_text_len', 120)
+    force_update = data.get('force_update', False)
+
+    result = {
+        "success": False,
+        "output": "",
+        "error": ""
+    }
+
+    if not draft_id:
+        result["error"] = "Hi, the required parameter 'draft_id' is missing. Please add it and try again."
+        return jsonify(result)
+
+    try:
+        summary = summarize_draft(
+            draft_id,
+            include_materials=include_materials,
+            max_text_len=max_text_len,
+            force_update=force_update,
+        )
+        result["success"] = True
+        result["output"] = summary
+        return jsonify(result)
+    except Exception as e:
+        result["error"] = f"Error occurred while summarizing draft: {str(e)}."
+        return jsonify(result)
+
+@app.route('/download_script', methods=['POST'])
+def download_script_service():
+    data = request.get_json()
+
+    draft_id = data.get('draft_id')
+    draft_folder = data.get('draft_folder')
+    script_data = data.get('script_data')
+
+    result = {
+        "success": False,
+        "output": "",
+        "error": ""
+    }
+
+    if not draft_id or not draft_folder:
+        result["error"] = "Hi, the required parameters 'draft_id' and 'draft_folder' are missing."
+        return jsonify(result)
+
+    try:
+        dl_result = download_script(draft_id, draft_folder, script_data)
+        if not dl_result.get("success"):
+            result["error"] = dl_result.get("error", "Download failed")
+            return jsonify(result)
+        result["success"] = True
+        result["output"] = dl_result
+        return jsonify(result)
+    except Exception as e:
+        result["error"] = f"Error occurred while downloading script: {str(e)}."
         return jsonify(result)
 
 @app.route('/add_sticker', methods=['POST'])
