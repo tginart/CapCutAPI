@@ -753,6 +753,54 @@ def summarize_draft(
                         details.append(f"keyframes=({kf_summ})")
                     lines.extend(indent(details, 3))
 
+                # Imported text segment (from templates or cloned drafts)
+                elif getattr(track, 'track_type', None) == draft.Track_type.text and hasattr(seg, 'material_id'):
+                    # Try to resolve text content from imported or local materials by material_id
+                    text_value = ""
+                    try:
+                        def _extract_text_from_mat(mat_obj):
+                            content_field = mat_obj.get('content')
+                            if isinstance(content_field, str):
+                                try:
+                                    parsed = json.loads(content_field)
+                                    return parsed.get('text') if isinstance(parsed, dict) else None
+                                except Exception:
+                                    return content_field  # sometimes plain text
+                            if isinstance(content_field, dict):
+                                return content_field.get('text')
+                            return None
+
+                        # Search imported materials first
+                        imported_txts = getattr(script, 'imported_materials', {}).get('texts', [])
+                        for mat in imported_txts:
+                            if mat.get('id') == getattr(seg, 'material_id', None):
+                                tv = _extract_text_from_mat(mat)
+                                if tv:
+                                    text_value = tv
+                                    break
+                        # Fallback to local materials.texts
+                        if not text_value:
+                            local_txts = getattr(script.materials, 'texts', [])
+                            for mat in local_txts:
+                                if mat.get('id') == getattr(seg, 'material_id', None):
+                                    tv = _extract_text_from_mat(mat)
+                                    if tv:
+                                        text_value = tv
+                                        break
+                    except Exception:
+                        pass
+
+                    if text_value:
+                        text_flat = str(text_value).replace("\n", " ")
+                        if len(text_flat) > max_text_len:
+                            text_flat = text_flat[:max_text_len - 1] + "…"
+                        seg_header += f"TextSegment id={getattr(seg, 'material_id', '')} text=\"{text_flat}\""
+                    else:
+                        seg_header += f"ImportedSegment material_id={getattr(seg, 'material_id', '')}"
+                    lines.extend(indent([seg_header], 2))
+                    tr = getattr(seg, 'target_timerange', None)
+                    lines.extend(indent([f"target={fmt_timerange(tr)}"], 3))
+
                 # Filter track segment
                 elif isinstance(seg, draft.Filter_segment):
                     seg_header += f"Filter '{seg.material.effect_meta.name}'"
