@@ -27,11 +27,9 @@ import CapCutAPI as cc
 
 ## Quick Start
 
-### 1. Create a draft and add edits, then save and copy into CapCut's drafts path:
+### 1. Create a draft and add edits, then save and move into CapCut's drafts path:
 
 ```python
-import os
-import shutil
 import CapCutAPI as cc
 
 # Create draft
@@ -50,21 +48,14 @@ cc.add_text(
 )
 
 # Set CapCut drafts directory
-capcut_drafts = os.path.expanduser("~/Movies/CapCut/User Data/Projects/com.lveditor.draft")
-# For JianYing (CN): ~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft
+capcut_drafts = "~/Movies/CapCut/User Data/Projects/com.lveditor.draft"
+# For JianYing (CN): "~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
 
-# Save draft
+# Save draft (writes ./<draft_id> and sets replace_path to capcut_drafts)
 cc.save_draft(draft_id, draft_folder=capcut_drafts)
 
-# Copy to CapCut drafts directory
-repo_dir = os.path.dirname(os.path.abspath(__file__))
-src = os.path.join(repo_dir, draft_id)
-dst = os.path.join(capcut_drafts, draft_id)
-
-if os.path.exists(dst):
-    shutil.rmtree(dst)
-shutil.copytree(src, dst)
-
+# Move into CapCut drafts directory so the app detects it
+dst = cc.move_into_capcut(draft_id, capcut_drafts, overwrite=True)
 print("Draft available at:", dst)
 ```
 
@@ -145,6 +136,21 @@ Materializes the in-memory draft into a folder under the repo directory named `d
 - Overlapping segments within the same track are automatically resolved by deleting the later-added segment.
 - When `is_upload_draft=true`, the local draft folder is zipped, uploaded via OSS, and then deleted locally.
 - Processes any pending keyframes queued by `add_video_keyframe` during this save.
+
+#### `move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) -> str`
+
+Copy the saved draft folder from the repo root (`./<draft_id>`) into the CapCut/JianYing drafts directory (`<drafts_root>/<draft_id>`), so the project appears in the app.
+
+**Arguments:**
+- `draft_id` (`str`): Previously saved draft id
+- `drafts_root` (`str`): CapCut/JianYing drafts root path (can be `~`-prefixed)
+- `overwrite` (`bool`): Remove existing destination folder first if present
+
+**Returns:** Destination path as a string
+
+**Key Notes:**
+- Raises if the source `./<draft_id>` does not exist (call `save_draft` first)
+- Does not modify/recache the draft; purely a filesystem publish step
 
 #### `summarize_draft(draft_id: str, *, include_materials: bool = True, max_text_len: int = 120, force_update: bool = False) -> str`
 
@@ -398,6 +404,7 @@ Builds a preview URL as `<draft_domain><preview_router>?draft_id=...&is_capcut=0
 | `query_task_status` / `query_script_impl` / `download_script` | `save_draft_impl` |
 | `list_drafts` | `list_drafts.list_drafts` |
 | `generate_draft_url` | `util.generate_draft_url` |
+| `move_into_capcut` | `util.move_into_capcut` |
 
 ## Troubleshooting
 

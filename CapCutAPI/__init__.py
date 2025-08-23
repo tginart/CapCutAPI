@@ -33,6 +33,7 @@ from add_video_keyframe_impl import add_video_keyframe_impl as add_video_keyfram
 
 # Utilities
 from util import generate_draft_url
+from util import move_into_capcut
 from list_drafts import list_drafts
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     # utils
     "generate_draft_url",
     "list_drafts",
+    "move_into_capcut",
 ]
 
 __version__ = "1.0.0"

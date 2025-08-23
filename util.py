@@ -81,3 +81,48 @@ def timing_decorator(func_name):
 
 def generate_draft_url(draft_id):
     return f"{DRAFT_DOMAIN}{PREVIEW_ROUTER}?draft_id={draft_id}&is_capcut={1 if IS_CAPCUT_ENV else 0}"
+
+
+def move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) -> str:
+    """Copy a saved draft folder into the CapCut/JianYing drafts directory.
+
+    This is a convenience wrapper for the manual copy step typically done after
+    calling `save_draft`. It copies `./<draft_id>` from the repository root into
+    `<drafts_root>/<draft_id>` so the project appears in the CapCut/JianYing UI.
+
+    Arguments:
+        draft_id: The draft id previously created/saved by the API.
+        drafts_root: Absolute path to the CapCut/JianYing drafts directory
+            (e.g., macOS CapCut: "~/Movies/CapCut/User Data/Projects/com.lveditor.draft").
+        overwrite: If True, remove any existing destination folder first.
+
+    Returns:
+        The destination path `<drafts_root>/<draft_id>`.
+
+    Raises:
+        FileNotFoundError: If the source folder `./<draft_id>` does not exist.
+        FileExistsError: If destination exists and `overwrite` is False.
+    """
+    # Resolve paths
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(repo_dir, draft_id)
+    dst_root = os.path.expanduser(drafts_root)
+    dst = os.path.join(dst_root, draft_id)
+
+    # Validate source
+    if not os.path.isdir(src):
+        raise FileNotFoundError(f"Source draft folder not found: {src}. Did you call save_draft first?")
+
+    # Ensure destination root exists
+    os.makedirs(dst_root, exist_ok=True)
+
+    # Handle overwrite policy
+    if os.path.exists(dst):
+        if overwrite:
+            shutil.rmtree(dst)
+        else:
+            raise FileExistsError(f"Destination already exists: {dst}")
+
+    # Perform copy (preserves the original in the repo)
+    shutil.copytree(src, dst)
+    return dst
