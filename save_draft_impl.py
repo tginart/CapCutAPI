@@ -20,7 +20,7 @@ import time
 import requests # Import requests for making HTTP calls
 import logging
 # Import configuration
-from settings import IS_CAPCUT_ENV, IS_UPLOAD_DRAFT
+from settings import IS_CAPCUT_ENV, IS_UPLOAD_DRAFT, DRAFT_CACHE_DIR
 
 # --- Get your Logger instance ---
 # The name here must match the logger name you configured in app.py
@@ -82,15 +82,20 @@ def save_draft_background(draft_id, draft_folder, task_id):
         update_tasks_cache(task_id, task_status)  # Use new cache management function
         logger.info(f"Task {task_id} status updated to 'processing': Preparing draft files.")
         
+        # Resolve output base directory
+        output_base = DRAFT_CACHE_DIR if draft_folder is None else os.path.expanduser(draft_folder)
+        os.makedirs(output_base, exist_ok=True)
+
         # Delete possibly existing draft_id folder
-        if os.path.exists(draft_id):
-            logger.warning(f"Deleting existing draft folder (current working directory): {draft_id}")
-            shutil.rmtree(draft_id)
+        out_draft_path = os.path.join(output_base, draft_id)
+        if os.path.exists(out_draft_path):
+            logger.warning(f"Deleting existing draft folder: {out_draft_path}")
+            shutil.rmtree(out_draft_path)
 
         logger.info(f"Starting to save draft: {draft_id}")
         # Save draft
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        draft_folder_for_duplicate = draft.Draft_folder(current_dir)
+        draft_folder_for_duplicate = draft.Draft_folder(output_base)
         # Choose different template directory based on configuration
         template_dir = "template" if IS_CAPCUT_ENV else "template_jianying"
         draft_folder_for_duplicate.duplicate_as_template(template_dir, draft_id)
@@ -120,7 +125,7 @@ def save_draft_background(draft_id, draft_folder, task_id):
                 download_tasks.append({
                     'type': 'audio',
                     'func': download_file,
-                    'args': (remote_url, os.path.join(current_dir, f"{draft_id}/assets/audio/{material_name}")),
+                    'args': (remote_url, os.path.join(output_base, f"{draft_id}/assets/audio/{material_name}")),
                     'material': audio
                 })
         
@@ -143,7 +148,7 @@ def save_draft_background(draft_id, draft_folder, task_id):
                     download_tasks.append({
                         'type': 'image',
                         'func': download_file,
-                        'args': (remote_url, os.path.join(current_dir, f"{draft_id}/assets/image/{material_name}")),
+                        'args': (remote_url, os.path.join(output_base, f"{draft_id}/assets/image/{material_name}")),
                         'material': video
                     })
                 
@@ -159,7 +164,7 @@ def save_draft_background(draft_id, draft_folder, task_id):
                     download_tasks.append({
                         'type': 'video',
                         'func': download_file,
-                        'args': (remote_url, os.path.join(current_dir, f"{draft_id}/assets/video/{material_name}")),
+                        'args': (remote_url, os.path.join(output_base, f"{draft_id}/assets/video/{material_name}")),
                         'material': video
                     })
 
@@ -212,8 +217,8 @@ def save_draft_background(draft_id, draft_folder, task_id):
         update_task_field(task_id, "message", "Saving draft information")
         logger.info(f"Task {task_id} progress 70%: Saving draft information.")
         
-        script.dump(os.path.join(current_dir, f"{draft_id}/draft_info.json"))
-        logger.info(f"Draft information has been saved to {os.path.join(current_dir, draft_id)}/draft_info.json.")
+        script.dump(os.path.join(output_base, f"{draft_id}/draft_info.json"))
+        logger.info(f"Draft information has been saved to {os.path.join(output_base, draft_id)}/draft_info.json.")
 
         draft_url = ""
         # Only upload draft information when IS_UPLOAD_DRAFT is True
@@ -238,9 +243,9 @@ def save_draft_background(draft_id, draft_folder, task_id):
             update_task_field(task_id, "draft_url", draft_url)
 
             # Clean up temporary files
-            if os.path.exists(os.path.join(current_dir, draft_id)):
-                shutil.rmtree(os.path.join(current_dir, draft_id))
-                logger.info(f"Cleaned up temporary draft folder: {os.path.join(current_dir, draft_id)}")
+            if os.path.exists(os.path.join(output_base, draft_id)):
+                shutil.rmtree(os.path.join(output_base, draft_id))
+                logger.info(f"Cleaned up temporary draft folder: {os.path.join(output_base, draft_id)}")
 
     
         # Update task status - Completed
@@ -862,6 +867,215 @@ def summarize_draft(
     # Remove empty trailing lines
     lines = [l for l in lines if l.strip() != ""]
     return "\n".join(lines)
+
+
+def parse_draft(
+    draft_id: str,
+    *,
+    force_update: bool = False,
+    include_assets: bool = True,
+    use_asset_refs: bool = True,
+) -> str:
+    """Export the current draft as a YAML script config.
+
+    The YAML conforms to the structure described in README_YAML.md:
+    - draft: width/height
+    - assets: name -> URL/path mapping (optional)
+    - steps: ordered editing operations
+
+    Args:
+        draft_id: Target draft id in cache.
+        force_update: If True, refresh media metadata before exporting.
+        include_assets: Whether to include a top-level assets map.
+        use_asset_refs: When True, steps reference media via $assets.<name>; otherwise embed URLs/paths inline.
+
+    Returns:
+        YAML string representing the draft as a declarative script.
+    """
+    import json
+
+    # Fetch script from cache
+    script = query_script_impl(draft_id, force_update=force_update)
+    if script is None:
+        return f"draft: {{}}\nsteps: []\n# Draft '{draft_id}' not found in cache."
+
+    # Utilities
+    def us_to_seconds(us_value):
+        try:
+            if us_value is None:
+                return 0.0
+            return float(us_value) / 1_000_000.0
+        except Exception:
+            return 0.0
+
+    def sanitize_key(name: str) -> str:
+        # Create a YAML/identifier friendly key
+        import re as _re
+        if not name:
+            return "asset"
+        key = name.strip().lower()
+        key = _re.sub(r"[^a-z0-9_\-]+", "_", key)
+        key = key.strip("_-") or "asset"
+        if key and key[0].isdigit():
+            key = f"a_{key}"
+        return key
+
+    # Build assets maps and id->asset key lookup
+    assets = {}
+    id_to_asset_key = {}
+
+    if include_assets:
+        # Videos/Images
+        for v in getattr(script.materials, 'videos', []) or []:
+            ref = getattr(v, 'remote_url', None) or getattr(v, 'path', None) or ""
+            base = sanitize_key(getattr(v, 'material_name', '') or getattr(v, 'material_id', '') or "video")
+            key = base
+            suffix = 2
+            while key in assets:
+                key = f"{base}_{suffix}"
+                suffix += 1
+            assets[key] = ref
+            id_to_asset_key[getattr(v, 'material_id', key)] = key
+
+        # Audios
+        for a in getattr(script.materials, 'audios', []) or []:
+            ref = getattr(a, 'remote_url', None) or getattr(a, 'path', None) or ""
+            base = sanitize_key(getattr(a, 'material_name', '') or getattr(a, 'material_id', '') or "audio")
+            key = base
+            suffix = 2
+            while key in assets:
+                key = f"{base}_{suffix}"
+                suffix += 1
+            assets[key] = ref
+            id_to_asset_key[getattr(a, 'material_id', key)] = key
+
+    # Steps generation (preserve render order across tracks)
+    steps = []
+    track_list = list(getattr(script, 'tracks', {}).values())
+    track_list.extend(getattr(script, 'imported_tracks', []))
+    track_list.sort(key=lambda t: t.render_index)
+
+    for track in track_list:
+        segs = getattr(track, 'segments', []) or []
+        for seg in segs:
+            # Video/Image segments
+            if isinstance(seg, draft.Video_segment):
+                material = seg.material_instance
+                mat_kind = getattr(material, 'material_type', 'video')
+                is_photo = (mat_kind == 'photo')
+                op_name = 'add_image' if is_photo else 'add_video'
+                mat_id = getattr(material, 'material_id', None)
+                ref = getattr(material, 'remote_url', None) or getattr(material, 'path', None) or ""
+
+                # timeranges in seconds
+                source_start = us_to_seconds(getattr(seg.source_timerange, 'start', 0))
+                source_end = us_to_seconds(getattr(seg.source_timerange, 'end', 0))
+                target_start = us_to_seconds(getattr(seg.target_timerange, 'start', 0))
+
+                args = {
+                    ('image_url' if is_photo else 'video_url'): (
+                        f"$assets.{id_to_asset_key.get(mat_id)}" if (use_asset_refs and mat_id in id_to_asset_key) else ref
+                    ),
+                    'start': round(source_start, 6),
+                    'end': round(source_end, 6) if source_end > 0 else None,
+                    'target_start': round(target_start, 6) if target_start > 0 else None,
+                    'track_name': getattr(track, 'name', None) or None,
+                }
+
+                # Optional numeric properties
+                try:
+                    if hasattr(seg, 'speed') and getattr(seg.speed, 'speed', 1.0) != 1.0:
+                        args['speed'] = float(getattr(seg.speed, 'speed', 1.0))
+                except Exception:
+                    pass
+                try:
+                    if hasattr(seg, 'volume') and seg.volume != 1.0:
+                        args['volume'] = float(seg.volume)
+                except Exception:
+                    pass
+
+                # Drop None values
+                args = {k: v for k, v in args.items() if v is not None}
+                steps.append({op_name: args})
+
+            # Audio segments
+            elif isinstance(seg, draft.Audio_segment):
+                material = seg.material_instance
+                mat_id = getattr(material, 'material_id', None)
+                ref = getattr(material, 'remote_url', None) or getattr(material, 'path', None) or ""
+                source_start = us_to_seconds(getattr(seg.source_timerange, 'start', 0))
+                source_end = us_to_seconds(getattr(seg.source_timerange, 'end', 0))
+                target_start = us_to_seconds(getattr(seg.target_timerange, 'start', 0))
+
+                args = {
+                    'audio_url': (
+                        f"$assets.{id_to_asset_key.get(mat_id)}" if (use_asset_refs and mat_id in id_to_asset_key) else ref
+                    ),
+                    'start': round(source_start, 6),
+                    'end': round(source_end, 6) if source_end > 0 else None,
+                    'target_start': round(target_start, 6) if target_start > 0 else None,
+                    'track_name': getattr(track, 'name', None) or None,
+                }
+                try:
+                    if hasattr(seg, 'speed') and getattr(seg.speed, 'speed', 1.0) != 1.0:
+                        args['speed'] = float(getattr(seg.speed, 'speed', 1.0))
+                except Exception:
+                    pass
+                try:
+                    if hasattr(seg, 'volume') and seg.volume != 1.0:
+                        args['volume'] = float(seg.volume)
+                except Exception:
+                    pass
+                args = {k: v for k, v in args.items() if v is not None}
+                steps.append({'add_audio': args})
+
+            # Text segments
+            elif isinstance(seg, draft.Text_segment):
+                text_value = getattr(seg, 'text', '') or ''
+                target_start = us_to_seconds(getattr(seg.target_timerange, 'start', 0))
+                target_end = us_to_seconds(getattr(seg.target_timerange, 'end', 0))
+
+                args = {
+                    'text': text_value,
+                    'start': round(target_start, 6),
+                    'end': round(target_end, 6) if target_end > 0 else None,
+                    'track_name': getattr(track, 'name', None) or None,
+                }
+                # Optional style bits (minimal)
+                try:
+                    fs = float(getattr(getattr(seg, 'style', None), 'size', 0) or 0)
+                    if fs > 0:
+                        args['font_size'] = fs
+                except Exception:
+                    pass
+                args = {k: v for k, v in args.items() if v is not None}
+                steps.append({'add_text': args})
+            else:
+                # Skip unsupported/imported segments for YAML export
+                continue
+
+    # Assemble config
+    cfg = {
+        'draft': {
+            'width': getattr(script, 'width', 1080),
+            'height': getattr(script, 'height', 1920),
+        },
+        'steps': steps,
+    }
+    if include_assets and assets:
+        cfg['assets'] = assets
+
+    # Dump to YAML (prefer PyYAML if available)
+    try:
+        import yaml as _yaml  # type: ignore
+        yaml_text = _yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+        # Ensure document start for clarity
+        if not yaml_text.startswith('---'):
+            yaml_text = '---\n' + yaml_text
+        return yaml_text
+    except Exception:
+        # Fallback to JSON string with a hint
+        return "# Install pyyaml for YAML output. JSON provided as fallback.\n" + json.dumps(cfg, ensure_ascii=False, indent=2)
 
 def download_script(draft_id: str, draft_folder: str = None, script_data: Dict = None) -> Dict[str, str]:
     """Downloads the draft script and its associated media assets.

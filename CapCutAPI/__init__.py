@@ -18,6 +18,7 @@ from save_draft_impl import (
     query_task_status,
     query_script_impl,
     summarize_draft,
+    parse_draft,
     download_script,
 )
 
@@ -47,6 +48,7 @@ __all__ = [
     "query_task_status",
     "query_script_impl",
     "summarize_draft",
+    "parse_draft",
     "download_script",
     # ops
     "add_video",
