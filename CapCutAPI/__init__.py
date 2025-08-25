@@ -5,14 +5,16 @@ Usage:
     import CapCutAPI as cc
     script, draft_id = cc.create_draft(width=1080, height=1920)
     cc.add_text(text="Hello", start=0, end=3, draft_id=draft_id)
-    cc.save_draft(draft_id, draft_folder="/path/to/CapCut/drafts")
+    script_copy, new_draft_id = cc.copy_draft(draft_id)  # Make a copy
+    cc.save_draft(new_draft_id, draft_folder="/path/to/CapCut/drafts")
 """
 
 from settings.local import IS_CAPCUT_ENV  # re-export environment flag
-
+from settings.local import DRAFT_CACHE_DIR
 # Core draft lifecycle
 from create_draft import create_draft, get_or_create_draft
 from clone_draft import clone_draft
+from copy_draft import copy_draft
 from save_draft_impl import (
     save_draft_impl as save_draft,
     query_task_status,
@@ -37,13 +39,21 @@ from util import generate_draft_url
 from util import move_into_capcut
 from list_drafts import list_drafts
 
+import os
+# CapCut project directory
+# TODO: add support for custom CapCut project directory
+# CAPCUT_PROJECT_DIR = os.path.expanduser("~/Movies/CapCut/User Data/Projects/com.lveditor.draft")
+
 __all__ = [
     # env
     "IS_CAPCUT_ENV",
+    "DRAFT_CACHE_DIR",
+    # CAPCUT_PROJECT_DIR",
     # lifecycle
     "create_draft",
     "get_or_create_draft",
     "clone_draft",
+    "copy_draft",
     "save_draft",
     "query_task_status",
     "query_script_impl",

@@ -8,6 +8,7 @@ import pyJianYingDraft as draft
 
 from draft_cache import update_cache
 from settings import IS_CAPCUT_ENV
+from settings.local import DRAFT_CACHE_DIR
 
 
 def _default_drafts_root() -> str:
@@ -32,7 +33,7 @@ def _default_drafts_root() -> str:
 def clone_draft(source_draft_name: str, *, source_root: Optional[str] = None) -> Tuple['draft.Script_file', str]:
     """Clone an existing CapCut/JianYing draft folder without modifying the original.
 
-    Copies the folder `<source_root>/<source_draft_name>` into this repository directory
+    Copies the folder `<source_root>/<source_draft_name>` into the draft cache directory
     under a newly generated `draft_id`, loads the `draft_info.json` in template mode,
     updates the in-memory cache, and returns the `(script, draft_id)`.
 
@@ -55,10 +56,10 @@ def clone_draft(source_draft_name: str, *, source_root: Optional[str] = None) ->
     if not os.path.isdir(source_path):
         raise FileNotFoundError(f"Source draft folder not found: {source_path}")
 
-    # Destination inside this repository directory
-    dest_root = os.path.dirname(os.path.abspath(__file__))
+    # Destination inside the draft cache directory
+    os.makedirs(DRAFT_CACHE_DIR, exist_ok=True)
     draft_id = f"dfd_cat_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-    dest_path = os.path.join(dest_root, draft_id)
+    dest_path = os.path.join(DRAFT_CACHE_DIR, draft_id)
 
     shutil.copytree(source_path, dest_path)
 

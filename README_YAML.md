@@ -12,8 +12,10 @@ This document explains how to write a YAML script to declaratively construct a C
 
 - `draft`: optional project settings
 - `assets`: optional name → URL/path mapping; referenced via `$assets.<name>`
-- `defaults`: optional key-value defaults applied to every step (step values win)
 - `steps`: ordered list of operations
+
+#### Note
+- `steps` must be a list. Each step must be one of the supported operations.
 
 Supported operations:
 `add_video`, `add_audio`, `add_image`, `add_text`, `add_subtitle`, `add_effect`, `add_sticker`, `add_video_keyframe`.
@@ -72,19 +74,6 @@ steps:
       times: [0, 2, 4]
       values: ["1.0", "1.2", "0.8"]
 ```
-
-### Validation & Defaults
-
-- `steps` must be a list. Each step must be a mapping.
-- Single-key steps must have exactly one key.
-- If no `draft_id` is provided, a draft is created automatically using `draft.width` and `draft.height` (defaults: 1080x1920).
-- The `draft_id` is automatically available to subsequent steps.
-- Defaults from the `defaults` section are merged with step parameters (step values take precedence).
-
-### Notes
-
-- Parameters below map directly to editing operations. Values are the same as in the app (e.g., transition and mask names)
-- You may optionally include a `save_draft` step; saving can also be handled outside YAML
 
 ### Canvas Coordinates & Transforms
 
@@ -284,9 +273,10 @@ steps:
 - Key notes:
   - `font` must be a valid font name in the environment; invalid names raise an error
   - Hex colors support `#RGB` and `#RRGGBB`
-  - Borders/background/shadow are emitted only when their enabling values are set
+  - Background is emitted only if `background_alpha > 0`; border only if `border_width > 0`; shadow only when `shadow_enabled=True`.  
   - `text_styles` ranges must satisfy `0 <= start < end <= len(text)`
   - **CRITICAL**: You CANNOT have temporally overlapping segments on the same track name! Use different `track_name` values for simultaneous text segments. Of course, you can re-use the same track name for content that does NOT overlap in time.
+  - `fixed_width`/`fixed_height` > 0 are converted to pixels by multiplying project width/height; `-1` disables fixed sizing.
 - Example:
 ```yaml
 - add_text:
@@ -297,6 +287,10 @@ steps:
     shadow_enabled: true
     background_color: "#000000"
 ```
+**Available Fonts:**
+
+```['Amigate', 'Anson', 'BlackMango_Black', 'BlackMango_Regular', 'Bungee_Regular', 'CC_Captial', 'CC_Moderno', 'Cabin_Rg', 'Caveat_Regular', 'Climate', 'Coiny_Regular', 'DMSans_BoldItalic', 'Exo', 'Gallery', 'Giveny', 'Grandstander_Regular', 'Gratefulness', 'HarmonyOS_Sans_SC_Bold', 'HarmonyOS_Sans_SC_Medium', 'HarmonyOS_Sans_SC_Regular', 'HarmonyOS_Sans_TC_Bold', 'HarmonyOS_Sans_TC_Light', 'HarmonyOS_Sans_TC_Medium', 'HarmonyOS_Sans_TC_Regular', 'HeptaSlab_ExtraBold', 'HeptaSlab_Light', 'Huben', 'Ingram', 'Integrity', 'Inter_Black', 'JYruantang', 'JYshiduo', 'JYzhuqingting', 'Kanit_Black', 'Kanit_Regular', 'Koulen_Regular', 'LXGWWenKai_Bold', 'LXGWWenKai_Light', 'LXGWWenKai_Regular', 'Love', 'Luxury', 'Merry_Christmas', 'MiSans_Heavy', 'MiSans_Regular', 'Modern', 'MyFont凌渡哥哥简', 'Nunito', 'OldStandardTT_Regular', 'Pacifico_Regular', 'PlayfairDisplay_Bold', 'Plunct', 'Polly', 'Poppins_Bold', 'Poppins_Regular', 'RedHatDisplay_BoldItalic', 'RedHatDisplay_Light', 'ResourceHanRoundedCN_Md', 'ResourceHanRoundedCN_Nl', 'Roboto_BlkCn', 'SansitaSwashed_Regular', 'SecularOne_Regular', 'Signature', 'Soap', 'Sora_Bold', 'Sora_Regular', 'SourceHanSansCN_Bold', 'SourceHanSansCN_Light', 'SourceHanSansCN_Medium', 'SourceHanSansCN_Normal', 'SourceHanSansCN_Regular', 'SourceHanSansTW_Bold', 'SourceHanSansTW_Light', 'SourceHanSansTW_Medium', 'SourceHanSansTW_Normal', 'SourceHanSansTW_Regular', 'SourceHanSerifCN_Light', 'SourceHanSerifCN_Medium', 'SourceHanSerifCN_Regular', 'SourceHanSerifCN_SemiBold', 'SourceHanSerifTW_Bold', 'SourceHanSerifTW_Light', 'SourceHanSerifTW_Medium', 'SourceHanSerifTW_Regular', 'SourceHanSerifTW_SemiBold', 'Staatliches_Regular', 'Sunset', 'Thrive', 'Thunder', 'Tronica', 'Vintage', 'ZYLAA_Demure', 'ZYLantastic', 'ZYLullaby', 'ZYSilhouette', 'ZYWitty', 'ZY_Balloonbillow', 'ZY_Blossom', 'ZY_Brief', 'ZY_Courage', 'ZY_Daisy', 'ZY_Dexterous', 'ZY_Earnest', 'ZY_Elixir', 'ZY_Fabulous', 'ZY_Fantasy', 'ZY_Flourishing_Italic', 'ZY_Fortitude', 'ZY_Kindly_Breeze', 'ZY_Loyalty', 'ZY_Modern', 'ZY_Multiplicity', 'ZY_Panacea', 'ZY_Relax', 'ZY_Slender', 'ZY_Spunk', 'ZY_Squiggle', 'ZY_Starry', 'ZY_Timing', 'ZY_Trend', 'ZY_Vigorous', 'ZY_Vigorous_Medium', 'Zapfino']```
+
 
 #### add_subtitle
 - Purpose: Import SRT as styled text

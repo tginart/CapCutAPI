@@ -26,6 +26,23 @@ PORT = 9000
 OSS_CONFIG = []
 MP4_OSS_CONFIG=[]
 
+# 默认草稿缓存目录（项目根目录下的 draft_cachespace_dir）
+_REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
+DRAFT_CACHE_DIR = os.path.join(_REPO_ROOT, "draft_cachespace_dir")
+
+# 允许通过环境变量覆盖
+_ENV_CACHE_DIR = os.environ.get("CAPCUTAPI_DRAFT_CACHE_DIR")
+if _ENV_CACHE_DIR:
+    DRAFT_CACHE_DIR = os.path.expanduser(_ENV_CACHE_DIR)
+
+def set_draft_cache_dir(path: str) -> None:
+    """Update the global draft cache directory at runtime.
+
+    This affects where drafts are saved (<DRAFT_CACHE_DIR>/<draft_id>).
+    """
+    global DRAFT_CACHE_DIR
+    DRAFT_CACHE_DIR = os.path.expanduser(path)
+
 # 尝试加载本地配置文件
 if os.path.exists(CONFIG_FILE_PATH):
     try:
@@ -60,6 +77,10 @@ if os.path.exists(CONFIG_FILE_PATH):
             # 更新MP4 OSS配置
             if "mp4_oss_config" in local_config:
                 MP4_OSS_CONFIG = local_config["mp4_oss_config"]
+
+            # 更新草稿缓存目录
+            if "draft_cache_dir" in local_config and isinstance(local_config["draft_cache_dir"], str):
+                DRAFT_CACHE_DIR = os.path.expanduser(local_config["draft_cache_dir"]) 
 
     except Exception as e:
         # 配置文件加载失败，使用默认配置

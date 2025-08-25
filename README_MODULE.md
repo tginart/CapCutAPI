@@ -37,13 +37,13 @@ script, draft_id = cc.create_draft(width=1080, height=1920)
 
 # Add text
 cc.add_text(
-    text="Hello", 
-    start=0, 
-    end=3, 
+    text="Hello",
+    start=0,
+    end=3,
     draft_id=draft_id,
-    font_size=8.0, 
-    font_color="#FFFFFF", 
-    width=1080, 
+    font_size=8.0,
+    font_color="#FFFFFF",
+    width=1080,
     height=1920
 )
 
@@ -244,6 +244,24 @@ Clone an existing CapCut/JianYing draft folder from the real projects directory 
 - Loads the copied `draft_info.json` in template mode and updates the in-memory cache
 - Raises `FileNotFoundError` if source draft or root directory doesn't exist
 
+#### `copy_draft(source_draft_id: str, *, new_draft_id: str | None = None) -> (script, new_draft_id)`
+
+Create a copy of an existing draft in the cache with a new draft identifier.
+
+**Arguments:**
+- `source_draft_id` (`str`): The draft id of the existing draft to copy
+- `new_draft_id` (`str|None`): Optional custom draft id for the copy; if `None`, a unique id is auto-generated
+
+**Returns:**
+- `script` (`pyJianYingDraft.Script_file`): The copied draft script object
+- `new_draft_id` (`str`): The draft identifier for the new copy
+
+**Key Notes:**
+- Copies the entire draft folder from `<DRAFT_CACHE_DIR>/<source_draft_id>` to `<DRAFT_CACHE_DIR>/<new_draft_id>`
+- Loads the copied `draft_info.json` in template mode and updates the in-memory cache
+- Raises `FileNotFoundError` if the source draft doesn't exist in the cache
+- Raises `FileExistsError` if the destination draft_id already exists
+
 #### `save_draft(draft_id: str, draft_folder: str | None = None) -> dict`
 
 Materializes the in-memory draft into a folder under the repo directory named `draft_id`, downloads assets, and writes `draft_info.json`.
@@ -296,6 +314,34 @@ Return a human-readable summary of the current draft: canvas, duration, tracks, 
 **Key Notes:**
 - If `force_update=True`, refreshes media metadata before summarizing
 - Truncates long text segment contents to `max_text_len`
+
+#### `parse_draft(draft_id: str, *, force_update: bool = False, include_assets: bool = True, use_asset_refs: bool = True) -> str`
+
+Export the current draft as a declarative YAML script that follows the structure described in `README_YAML.md` (`draft`, optional `assets`, and `steps`).
+
+**Arguments:**
+- `draft_id` (`str`): Target draft id in cache
+- `force_update` (`bool`): Refresh media metadata before exporting. Default `False`
+- `include_assets` (`bool`): Include a top-level `assets` map. Default `True`
+- `use_asset_refs` (`bool`): Reference media via `$assets.<name>` in steps when possible; otherwise embed URLs/paths inline. Default `True`
+
+**Returns:**
+- `str`: YAML text of the script. If PyYAML is unavailable, returns a JSON string with a hint comment
+
+**Key Notes:**
+- Emits steps for videos/images (`add_video`/`add_image`), audio (`add_audio`), and text (`add_text`); unsupported segments are skipped
+- Times are exported in seconds; width/height are included under the top-level `draft`
+- Track order respects render order; `track_name` is preserved when available
+
+**Example:**
+```python
+import CapCutAPI as cc
+
+# Export the current draft to a YAML script file
+yaml_text = cc.parse_draft(draft_id)
+with open("project.yml", "w", encoding="utf-8") as f:
+    f.write(yaml_text)
+```
 
 #### `query_task_status(task_id: str) -> dict`
 
@@ -766,6 +812,7 @@ Builds a preview URL as `<draft_domain><preview_router>?draft_id=...&is_capcut=0
 | `create_draft` | `create_draft.create_draft` |
 | `get_or_create_draft` | `create_draft.get_or_create_draft` |
 | `clone_draft` | `clone_draft.clone_draft` |
+| `copy_draft` | `copy_draft.copy_draft` |
 | `save_draft` | `save_draft_impl.save_draft_impl` |
 | `add_video` | `add_video_track.add_video_track` |
 | `add_audio` | `add_audio_track.add_audio_track` |

@@ -6,7 +6,7 @@ import os
 import hashlib
 import functools
 import time
-from settings.local import DRAFT_DOMAIN, PREVIEW_ROUTER, IS_CAPCUT_ENV
+from settings.local import DRAFT_DOMAIN, PREVIEW_ROUTER, IS_CAPCUT_ENV, DRAFT_CACHE_DIR, set_draft_cache_dir
 
 def hex_to_rgb(hex_color: str) -> tuple:
     """Convert hexadecimal color code to RGB tuple (range 0.0-1.0)"""
@@ -29,12 +29,11 @@ def is_windows_path(path):
 
 
 def zip_draft(draft_id):
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Compress folder
-    zip_dir = os.path.join(current_dir, "tmp/zip")
+    # Compress folder under configured cache dir
+    zip_dir = os.path.join(DRAFT_CACHE_DIR, "tmp/zip")
     os.makedirs(zip_dir, exist_ok=True)
     zip_path = os.path.join(zip_dir, f"{draft_id}.zip")
-    shutil.make_archive(os.path.join(zip_dir, draft_id), 'zip', os.path.join(current_dir, draft_id))
+    shutil.make_archive(os.path.join(zip_dir, draft_id), 'zip', os.path.join(DRAFT_CACHE_DIR, draft_id))
     return zip_path
 
 def url_to_hash(url, length=16):
@@ -87,7 +86,7 @@ def move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) ->
     """Copy a saved draft folder into the CapCut/JianYing drafts directory.
 
     This is a convenience wrapper for the manual copy step typically done after
-    calling `save_draft`. It copies `./<draft_id>` from the repository root into
+    calling `save_draft`. It copies `<draft_id>` from the draft cache directory into
     `<drafts_root>/<draft_id>` so the project appears in the CapCut/JianYing UI.
 
     Arguments:
@@ -100,18 +99,17 @@ def move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) ->
         The destination path `<drafts_root>/<draft_id>`.
 
     Raises:
-        FileNotFoundError: If the source folder `./<draft_id>` does not exist.
+        FileNotFoundError: If the source folder `<DRAFT_CACHE_DIR>/<draft_id>` does not exist.
         FileExistsError: If destination exists and `overwrite` is False.
     """
     # Resolve paths
-    repo_dir = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(repo_dir, draft_id)
+    src = os.path.join(DRAFT_CACHE_DIR, draft_id)
     dst_root = os.path.expanduser(drafts_root)
     dst = os.path.join(dst_root, draft_id)
 
     # Validate source
     if not os.path.isdir(src):
-        raise FileNotFoundError(f"Source draft folder not found: {src}. Did you call save_draft first?")
+        raise FileNotFoundError(f"Source draft folder not found: {src}. Did you call save_draft or clone_draft first?")
 
     # Ensure destination root exists
     os.makedirs(dst_root, exist_ok=True)
@@ -123,6 +121,6 @@ def move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) ->
         else:
             raise FileExistsError(f"Destination already exists: {dst}")
 
-    # Perform copy (preserves the original in the repo)
+    # Perform copy (preserves the original in the cache)
     shutil.copytree(src, dst)
     return dst
