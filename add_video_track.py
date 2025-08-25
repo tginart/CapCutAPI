@@ -130,11 +130,11 @@ def add_video_track(
 
     # Build material_name and remote spec
     if local_path:
-        # Only support mp4 local files per request; fail fast for others
+        # Support both mp4 and mov local files
         _, ext = os.path.splitext(local_path)
         ext = ext.lower()
-        if ext != ".mp4":
-            raise ValueError(f"Only local .mp4 files are supported, got '{ext}'")
+        if ext not in (".mp4", ".mov"):
+            raise ValueError(f"Only local .mp4 and .mov files are supported, got '{ext}'")
         material_name = os.path.basename(local_path)
         remote_spec = local_path
     else:
