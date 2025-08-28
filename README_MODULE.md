@@ -51,13 +51,37 @@ cc.add_text(
 capcut_drafts = "~/Movies/CapCut/User Data/Projects/com.lveditor.draft"
 # For JianYing (CN): "~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
 
-# Save draft (writes ./<draft_id> and sets replace_path to capcut_drafts)
-cc.save_draft(draft_id, draft_folder=capcut_drafts)
-
 # Move into CapCut drafts directory so the app detects it
-dst = cc.move_into_capcut(draft_id, capcut_drafts, overwrite=True)
+# move_into_capcut now delegates to save_draft internally using the
+# CapCut projects directory, ensuring all file paths resolve properly.
+dst = cc.move_into_capcut(draft_id, overwrite=True)
 print("Draft available at:", dst)
 ```
+
+## Video Export Feature
+
+**NEW!** Export your CapCut drafts directly to video files using FFmpeg.
+
+```python
+import CapCutAPI as cc
+
+# Export from YAML config
+result = cc.export_to_video(
+    output_path="my_video.mp4",
+    yaml_config="project.yml"
+)
+
+# Export from existing draft
+result = cc.export_to_video(
+    output_path="draft_video.mp4",
+    draft_id="dfd_cat_123456789_abc123"
+)
+
+if result["success"]:
+    print(f"Video exported: {result['output_path']}")
+```
+
+See `README_VIDEO_EXPORT.md` for complete documentation and examples.
 
 ## YAML Script Support
 
@@ -151,6 +175,28 @@ steps:
 ```
 
 See `README_YAML.md` for complete syntax documentation and examples.
+
+### Function: `export_to_video`
+
+- **Signature**: `export_to_video(output_path: str = None, yaml_config: str = None, draft_id: str = None, width: int = None, height: int = None, fps: int = None, video_bitrate: str = None, audio_bitrate: str = None) -> dict`
+- **Description**: Export a CapCut draft to video using FFmpeg. Either `yaml_config` or `draft_id` must be provided.
+- **Parameters**:
+  - `output_path`: Output video file path (auto-generated if None)
+  - `yaml_config`: YAML config file path or raw content
+  - `draft_id`: Existing draft ID in cache
+  - `width/height`: Output resolution (uses draft canvas if None)
+  - `fps`: Output frame rate (default 30)
+  - `video_bitrate/audio_bitrate`: Encoding bitrates
+- **Returns**: `dict` with success status, output path, and metadata
+- **Requirements**: FFmpeg must be installed and available in PATH
+- **Example**:
+  ```python
+  # Export from YAML
+  result = cc.export_to_video("output.mp4", yaml_config="project.yml")
+
+  # Export from draft
+  result = cc.export_to_video("output.mp4", draft_id="dfd_cat_123456789_abc123")
+  ```
 
 ### Function: `parse_yaml_config`
 
@@ -282,21 +328,34 @@ Materializes the in-memory draft into a folder under the repo directory named `d
 - When `is_upload_draft=true`, the local draft folder is zipped, uploaded via OSS, and then deleted locally.
 - Processes any pending keyframes queued by `add_video_keyframe` during this save.
 
-#### `move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) -> str`
+#### `move_into_capcut(draft_id: str, overwrite: bool = True) -> str`
 
-Copy the saved draft folder from the repo root (`./<draft_id>`) into the CapCut/JianYing drafts directory (`<drafts_root>/<draft_id>`), so the project appears in the app.
+Publish the draft into CapCut's drafts directory using the same logic as `save_draft`, targeting the OS CapCut projects directory. This ensures asset paths are set correctly.
 
 **Arguments:**
-- `draft_id` (`str`): Previously saved draft id
-- `drafts_root` (`str`): CapCut/JianYing drafts root path (can be `~`-prefixed)
-- `overwrite` (`bool`): Remove existing destination folder first if present. Default `True`
+- `draft_id`: The draft id to move
+- `overwrite`: If True, remove any existing destination folder first. Default `True`
 
 **Returns:**
-- `str`: Destination path as a string
+- `str`: The destination path in CapCut's drafts directory (`CAPCUT_PROJECT_DIR/<draft_id>`)
 
 **Key Notes:**
-- Raises if the source `./<draft_id>` does not exist (call `save_draft` first)
-- Does not modify/recache the draft; purely a filesystem publish step
+- Uses `save_draft` internally to ensure all asset paths in `draft_info.json` are properly updated
+- For renaming drafts, use `copy_draft` first to create a renamed version in the cache
+- The CapCut projects directory path is defined in `CAPCUT_PROJECT_DIR` (typically `~/Movies/CapCut/User Data/Projects/com.lveditor.draft` on macOS)
+- Raises `RuntimeError` if the save operation fails
+
+**Example:**
+```python
+# Move draft into CapCut's directory
+dst_path = cc.move_into_capcut(draft_id)
+print("Draft moved to:", dst_path)
+
+# For renaming, first create a copy with new name
+new_draft_id = "my_renamed_draft"
+cc.copy_draft(draft_id, new_draft_id=new_draft_id)
+cc.move_into_capcut(new_draft_id)
+```
 
 #### `summarize_draft(draft_id: str, *, include_materials: bool = True, max_text_len: int = 120, force_update: bool = False) -> str`
 
@@ -544,7 +603,7 @@ Add an image as a video segment of type photo. Supports intro/outro/combo animat
 - `combo_animation` (`str|None`): Combo animation parameter
 - `combo_animation_duration` (`float`): Combo animation duration (seconds), default `0.5`
 - `transition` (`str|None`): Transition type, supported transitions include: Dissolve, Move Up, Move Down, Move Left, Move Right, Split, Compress, Anime Cloud, Anime Vortex, etc.
-- `transition_duration` (`float|None`): Transition duration (seconds), default `0.5`
+- `transition_duration` (`float`): Transition duration (seconds), default `0.5`
 - `mask_type` (`str|None`): Mask type (`Linear`, `Mirror`, `Circle`, `Rectangle`, `Heart`, `Star`)
 - `mask_center_x` (`float`): Mask center X coordinate (in material pixels), default set at material center
 - `mask_center_y` (`float`): Mask center Y coordinate (in material pixels), default set at material center

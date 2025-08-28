@@ -7,6 +7,7 @@ import hashlib
 import functools
 import time
 from settings.local import DRAFT_DOMAIN, PREVIEW_ROUTER, IS_CAPCUT_ENV, DRAFT_CACHE_DIR, set_draft_cache_dir
+# save_draft_impl is imported lazily inside move_into_capcut to avoid circular imports
 
 def hex_to_rgb(hex_color: str) -> tuple:
     """Convert hexadecimal color code to RGB tuple (range 0.0-1.0)"""
@@ -82,45 +83,45 @@ def generate_draft_url(draft_id):
     return f"{DRAFT_DOMAIN}{PREVIEW_ROUTER}?draft_id={draft_id}&is_capcut={1 if IS_CAPCUT_ENV else 0}"
 
 
-def move_into_capcut(draft_id: str, drafts_root: str, overwrite: bool = True) -> str:
-    """Copy a saved draft folder into the CapCut/JianYing drafts directory.
+def move_into_capcut(draft_id: str, overwrite: bool = True) -> str:
+    """Publish a draft into CapCut's drafts directory using save_draft logic.
 
-    This is a convenience wrapper for the manual copy step typically done after
-    calling `save_draft`. It copies `<draft_id>` from the draft cache directory into
-    `<drafts_root>/<draft_id>` so the project appears in the CapCut/JianYing UI.
+    This ensures material paths are written correctly by delegating to
+    save_draft_impl with the CapCut projects directory as the target.
 
     Arguments:
-        draft_id: The draft id previously created/saved by the API.
-        drafts_root: Absolute path to the CapCut/JianYing drafts directory
-            (e.g., macOS CapCut: "~/Movies/CapCut/User Data/Projects/com.lveditor.draft").
-        overwrite: If True, remove any existing destination folder first.
+        draft_id: The draft id to move
+        overwrite: If True, allow replacing an existing destination folder
 
     Returns:
-        The destination path `<drafts_root>/<draft_id>`.
+        str: The destination path in CapCut's drafts directory
 
     Raises:
-        FileNotFoundError: If the source folder `<DRAFT_CACHE_DIR>/<draft_id>` does not exist.
-        FileExistsError: If destination exists and `overwrite` is False.
+        FileNotFoundError: If the draft does not exist in cache
+        FileExistsError: If destination exists and overwrite is False
+        RuntimeError: If saving fails
     """
-    # Resolve paths
-    src = os.path.join(DRAFT_CACHE_DIR, draft_id)
-    dst_root = os.path.expanduser(drafts_root)
-    dst = os.path.join(dst_root, draft_id)
+    from CapCutAPI import CAPCUT_PROJECT_DIR
+    from save_draft_impl import save_draft_impl
 
-    # Validate source
-    if not os.path.isdir(src):
-        raise FileNotFoundError(f"Source draft folder not found: {src}. Did you call save_draft or clone_draft first?")
+    # Validate source exists in cache dir
+    src_path = os.path.join(DRAFT_CACHE_DIR, draft_id)
+    if not os.path.isdir(src_path):
+        raise FileNotFoundError(f"Source draft folder not found: {src_path}")
 
-    # Ensure destination root exists
-    os.makedirs(dst_root, exist_ok=True)
+    # Destination handling
+    os.makedirs(CAPCUT_PROJECT_DIR, exist_ok=True)
+    dst_path = os.path.join(CAPCUT_PROJECT_DIR, draft_id)
+    if os.path.exists(dst_path) and not overwrite:
+        raise FileExistsError(f"Destination already exists: {dst_path}")
 
-    # Handle overwrite policy
-    if os.path.exists(dst):
-        if overwrite:
-            shutil.rmtree(dst)
-        else:
-            raise FileExistsError(f"Destination already exists: {dst}")
+    # Use official save pathing to emit correct replace_path values and files
+    result = save_draft_impl(draft_id, draft_folder=CAPCUT_PROJECT_DIR)
+    if not isinstance(result, dict) or not result.get("success"):
+        raise RuntimeError(f"Failed to move draft into CapCut: {result}")
 
-    # Perform copy (preserves the original in the cache)
-    shutil.copytree(src, dst)
-    return dst
+    # Final sanity check
+    if not os.path.isdir(dst_path):
+        raise RuntimeError(f"Draft was not created at expected location: {dst_path}")
+
+    return dst_path

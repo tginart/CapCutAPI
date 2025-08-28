@@ -45,9 +45,11 @@ Issues = "https://github.com/ashreo/CapCutAPI/issues"
 [tool.setuptools]
 include-package-data = true
 py-modules = [
+    "export_to_video_impl",
     "add_audio_track",
     "add_effect_impl",
     "add_image_impl",
+    "copy_draft",
     "clone_draft",
     "add_sticker_impl",
     "add_subtitle_impl",

@@ -39,16 +39,20 @@ from util import generate_draft_url
 from util import move_into_capcut
 from list_drafts import list_drafts
 
+# Video export
+from export_to_video_impl import export_to_video_impl, VideoExportConfig
+
 import os
 # CapCut project directory
-# TODO: add support for custom CapCut project directory
-# CAPCUT_PROJECT_DIR = os.path.expanduser("~/Movies/CapCut/User Data/Projects/com.lveditor.draft")
+CAPCUT_PROJECT_DIR = os.path.expanduser("~/Movies/CapCut/User Data/Projects/com.lveditor.draft")
+DEFAULT_VIDEO_EXPORT_DIR = os.path.expanduser("/Users/tginart/Documents/LocalDev/ai-capcut/CapCutAPI/default_video_export")
 
 __all__ = [
     # env
     "IS_CAPCUT_ENV",
     "DRAFT_CACHE_DIR",
-    # CAPCUT_PROJECT_DIR",
+    "CAPCUT_PROJECT_DIR",
+    "DEFAULT_VIDEO_EXPORT_DIR",
     # lifecycle
     "create_draft",
     "get_or_create_draft",
@@ -74,7 +78,10 @@ __all__ = [
     "list_drafts",
     "move_into_capcut",
     "parse_yaml_config",
-]
+    # video export
+    "export_to_video",
+    "VideoExportConfig",
+] 
 
 __version__ = "1.0.0"
 
@@ -218,8 +225,21 @@ def parse_yaml_config(filepath: str):
         call_args = build_args(step_args or {})
         call_args.setdefault("draft_id", draft_id)
 
-        # Call the operation
-        result = op_map[op_name](**call_args)
+        # Call the operation with contextual error reporting
+        try:
+            result = op_map[op_name](**call_args)
+        except Exception as e:
+            # Enrich error with step index, operation name, and step config for easier debugging
+            step_descriptor = f"step {idx + 1} ({op_name})"
+            step_obj = step
+            try:
+                if yaml is not None:
+                    subyaml = yaml.safe_dump(step_obj, sort_keys=False, allow_unicode=True).strip()
+                else:
+                    subyaml = json.dumps(step_obj, indent=2, ensure_ascii=False)
+            except Exception:
+                subyaml = str(step_obj)
+            raise e.__class__(f"{step_descriptor} failed: {e}\nStep config:\n{subyaml}") from e
 
         # Harmonize and carry draft_id forward
         if isinstance(result, tuple):
@@ -242,4 +262,90 @@ def parse_yaml_config(filepath: str):
         last_result = {"draft_id": draft_id, "draft_url": generate_draft_url(draft_id)}
 
     return last_result
+
+
+# --- Video Export Function ---
+def export_to_video(
+    output_path: str = None,
+    yaml_config: str = None,
+    draft_id: str = None,
+    width: int = None,
+    height: int = None,
+    fps: int = None,
+    video_bitrate: str = None,
+    audio_bitrate: str = None
+) -> dict:
+    """Export a CapCut draft to video using FFmpeg.
+
+    Args:
+        output_path (str): Path where the output video will be saved.
+                          If None, saves to DEFAULT_VIDEO_EXPORT_DIR with auto-generated name.
+        yaml_config (str): Path to YAML config file, raw YAML content, or None.
+        draft_id (str): ID of existing draft in cache, or None.
+        width (int): Output video width. If None, uses draft canvas width.
+        height (int): Output video height. If None, uses draft canvas height.
+        fps (int): Output video FPS. If None, uses draft FPS.
+        video_bitrate (str): Video bitrate (e.g., "8000k"). Default "8000k".
+        audio_bitrate (str): Audio bitrate (e.g., "128k"). Default "128k".
+
+    Returns:
+        dict: Export result with success status and metadata.
+
+    Note:
+        Either yaml_config or draft_id must be provided (not both).
+
+    Example:
+        ```python
+        import CapCutAPI as cc
+
+        # Export from YAML config
+        result = cc.export_to_video(
+            output_path="output.mp4",
+            yaml_config="project.yml"
+        )
+
+        # Export from existing draft
+        result = cc.export_to_video(
+            output_path="output.mp4",
+            draft_id="dfd_cat_123456789_abc123"
+        )
+        ```
+    """
+    import os
+    import uuid
+    from datetime import datetime
+
+    # Validate inputs
+    if yaml_config and draft_id:
+        raise ValueError("Cannot specify both yaml_config and draft_id")
+    if not yaml_config and not draft_id:
+        raise ValueError("Must specify either yaml_config or draft_id")
+
+    # Generate output path if not provided
+    if output_path is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(DEFAULT_VIDEO_EXPORT_DIR, f"export_{timestamp}_{uuid.uuid4().hex[:8]}.mp4")
+
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Create export config
+    # Guard against passing None for fps which would propagate to FFmpeg as an invalid value
+    export_config = VideoExportConfig(
+        output_path=output_path,
+        width=width,
+        height=height,
+        fps=(fps if fps is not None else 30),
+        video_bitrate=video_bitrate or "8000k",
+        audio_bitrate=audio_bitrate or "128k"
+    )
+
+    # Call implementation
+    return export_to_video_impl(
+        output_path=output_path,
+        yaml_config=yaml_config,
+        draft_id=draft_id,
+        export_config=export_config
+    )
 
