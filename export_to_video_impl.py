@@ -678,6 +678,10 @@ class VideoCompositionEngine:
         position_x = "(w-tw)/2"  # default center if no transforms
         position_y = "(h-th)/2"
 
+        # Background properties
+        background_enabled = False
+        background_color = "black@0.5"  # Default transparent black
+
         if style:
             # Map CapCut size to pixels
             size_val = getattr(style, 'size', None)
@@ -699,6 +703,44 @@ class VideoCompositionEngine:
                 except Exception:
                     pass
 
+        # Extract background properties from segment data
+        background_data = getattr(segment_data, 'background', None)
+        if background_data:
+            try:
+                # Import hex_to_rgb utility
+                from util import hex_to_rgb
+
+                bg_alpha = getattr(background_data, 'alpha', 0.0)
+                bg_round_radius = getattr(background_data, 'round_radius', 0.0)
+
+                # Throw error for rounded corners (not supported yet)
+                if bg_round_radius > 0:
+                    raise NotImplementedError("Rounded corners for text backgrounds are not supported yet")
+
+                if bg_alpha > 0:  # Only enable background if alpha > 0
+                    background_enabled = True
+
+                    # Convert background color from hex to FFmpeg format
+                    bg_color_hex = getattr(background_data, 'color', '#000000')
+                    if isinstance(bg_color_hex, str) and bg_color_hex.startswith('#'):
+                        try:
+                            r, g, b = hex_to_rgb(bg_color_hex)
+                            r_i = max(0, min(255, int(round(r * 255))))
+                            g_i = max(0, min(255, int(round(g * 255))))
+                            b_i = max(0, min(255, int(round(b * 255))))
+                            background_color = f"0x{r_i:02x}{g_i:02x}{b_i:02x}@{bg_alpha}"
+                        except Exception:
+                            # Fallback to default if color conversion fails
+                            background_color = f"black@{bg_alpha}"
+                    else:
+                        background_color = f"black@{bg_alpha}"
+
+            except NotImplementedError:
+                raise  # Re-raise the rounded corners error
+            except Exception:
+                # If background processing fails, disable background
+                background_enabled = False
+
         # Position conversion from normalized coordinates stored in clip_settings
         if clip_settings is not None:
             if hasattr(clip_settings, 'transform_x'):
@@ -714,14 +756,23 @@ class VideoCompositionEngine:
 
         # Create text filter with timing
         duration = segment.end_time - segment.start_time
-        text_filter = (
-            f"drawtext=text='{text_content}'"
-            f":fontsize={font_size}"
-            f":fontcolor={font_color}"
-            f":x={position_x}"
-            f":y={position_y}"
+        text_filter_parts = [
+            f"drawtext=text='{text_content}'",
+            f":fontsize={font_size}",
+            f":fontcolor={font_color}",
+            f":x={position_x}",
+            f":y={position_y}",
             f":enable='between(t\\,{segment.start_time}\\,{segment.end_time})'"
-        )
+        ]
+
+        # Add background parameters if enabled
+        if background_enabled:
+            text_filter_parts.extend([
+                f":box=1",
+                f":boxcolor={background_color}"
+            ])
+
+        text_filter = "".join(text_filter_parts)
 
         return text_filter
 
@@ -867,6 +918,43 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
         font_size = engine._map_capcut_size_to_pixels(getattr(style, 'size', None)) if style else max(12, int(0.05 * engine.height))
         font_color = getattr(style, 'font_color', 'white') if style else 'white'
 
+        # Extract background properties for prerendered text
+        background_enabled = False
+        background_color = "black@0.5"
+
+        background_data = getattr(segment_data, 'background', None)
+        if background_data:
+            try:
+                from util import hex_to_rgb
+
+                bg_alpha = getattr(background_data, 'alpha', 0.0)
+                bg_round_radius = getattr(background_data, 'round_radius', 0.0)
+
+                # Throw error for rounded corners (not supported yet)
+                if bg_round_radius > 0:
+                    raise NotImplementedError("Rounded corners for text backgrounds are not supported yet")
+
+                if bg_alpha > 0:
+                    background_enabled = True
+
+                    bg_color_hex = getattr(background_data, 'color', '#000000')
+                    if isinstance(bg_color_hex, str) and bg_color_hex.startswith('#'):
+                        try:
+                            r, g, b = hex_to_rgb(bg_color_hex)
+                            r_i = max(0, min(255, int(round(r * 255))))
+                            g_i = max(0, min(255, int(round(g * 255))))
+                            b_i = max(0, min(255, int(round(b * 255))))
+                            background_color = f"0x{r_i:02x}{g_i:02x}{b_i:02x}@{bg_alpha}"
+                        except Exception:
+                            background_color = f"black@{bg_alpha}"
+                    else:
+                        background_color = f"black@{bg_alpha}"
+
+            except NotImplementedError:
+                raise  # Re-raise the rounded corners error
+            except Exception:
+                background_enabled = False
+
         # Position baked into prerender from clip settings (global normalized coords)
         clip_settings = getattr(segment_data, 'clip_settings', None)
         position_x = "(w-tw)/2"
@@ -892,9 +980,18 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
         canvas = (
             f"color=s={engine.width}x{engine.height}:r={engine.fps}:d={duration},format=rgba,geq=a='0'"
         )
-        text_filter = (
+
+        # Build text filter with background support
+        text_filter_parts = [
             f"drawtext=text='{text_content}':fontsize={font_size}:fontcolor={font_color}:x={position_x}:y={position_y}"
-        )
+        ]
+
+        if background_enabled:
+            text_filter_parts.extend([
+                f":box=1:boxcolor={background_color}"
+            ])
+
+        text_filter = "".join(text_filter_parts)
 
         out_path = os.path.join(temp_dir, f"text_seg_{idx:03d}.mov")
         cmd = [
