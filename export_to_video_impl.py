@@ -703,10 +703,14 @@ class VideoCompositionEngine:
         if clip_settings is not None:
             if hasattr(clip_settings, 'transform_x'):
                 transform_x = getattr(clip_settings, 'transform_x', 0.0)
-                position_x = int((transform_x + 1.0) * self.width / 2)
+                # Position center of text at the specified coordinate
+                center_x = int((transform_x + 1.0) * self.width / 2)
+                position_x = f"{center_x}-tw/2"
             if hasattr(clip_settings, 'transform_y'):
                 transform_y = getattr(clip_settings, 'transform_y', 0.0)
-                position_y = int((transform_y + 1.0) * self.height / 2)
+                # Position center of text at the specified coordinate
+                center_y = int((transform_y + 1.0) * self.height / 2)
+                position_y = f"{center_y}-th/2"
 
         # Create text filter with timing
         duration = segment.end_time - segment.start_time
@@ -870,10 +874,14 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
         if clip_settings is not None:
             if hasattr(clip_settings, 'transform_x'):
                 transform_x = getattr(clip_settings, 'transform_x', 0.0)
-                position_x = int((transform_x + 1.0) * engine.width / 2)
+                # Position center of text at the specified coordinate
+                center_x = int((transform_x + 1.0) * engine.width / 2)
+                position_x = f"{center_x}-tw/2"
             if hasattr(clip_settings, 'transform_y'):
                 transform_y = getattr(clip_settings, 'transform_y', 0.0)
-                position_y = int((transform_y + 1.0) * engine.height / 2)
+                # Position center of text at the specified coordinate
+                center_y = int((transform_y + 1.0) * engine.height / 2)
+                position_y = f"{center_y}-th/2"
 
         duration = max(0.0, segment.end_time - segment.start_time)
         if duration <= 0:
