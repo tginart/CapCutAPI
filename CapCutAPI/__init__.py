@@ -135,7 +135,17 @@ def parse_yaml_config(filepath: str):
         # Fallback to strict JSON
         cfg = json.loads(text)
 
-    cfg = cfg or {}
+    # Ensure cfg is always a dictionary
+    if not isinstance(cfg, dict):
+        if cfg is None:
+            cfg = {}
+        else:
+            # If YAML contains just a string or other non-dict value, wrap it
+            cfg = {"content": cfg}
+            # Log a warning for debugging purposes
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"YAML/JSON content parsed to non-dict type {type(cfg).__name__}: {cfg!r}. Wrapped as {{'content': value}}.")
 
     draft_cfg = cfg.get("draft") or {}
     assets = cfg.get("assets") or {}
@@ -149,7 +159,9 @@ def parse_yaml_config(filepath: str):
     def resolve_value(value):
         if isinstance(value, str) and value.startswith("$assets."):
             key = value.split(".", 1)[1]
-            return assets.get(key)
+            if key not in assets or assets.get(key) is None:
+                raise KeyError(f"Unknown asset reference '$assets.{key}'. Define it under 'assets' at the top level.")
+            return assets[key]
         if isinstance(value, list):
             return [resolve_value(v) for v in value]
         if isinstance(value, dict):
@@ -221,12 +233,12 @@ def parse_yaml_config(filepath: str):
             draft_id_tuple = create_draft(width=width, height=height)
             draft_id = draft_id_tuple[0]
 
-        # Build args and inject draft_id if not provided
-        call_args = build_args(step_args or {})
-        call_args.setdefault("draft_id", draft_id)
-
         # Call the operation with contextual error reporting
         try:
+            # Build args and inject draft_id if not provided
+            call_args = build_args(step_args or {})
+            call_args.setdefault("draft_id", draft_id)
+
             result = op_map[op_name](**call_args)
         except Exception as e:
             # Enrich error with step index, operation name, and step config for easier debugging
@@ -273,7 +285,13 @@ def export_to_video(
     height: int = None,
     fps: int = None,
     video_bitrate: str = None,
-    audio_bitrate: str = None
+    audio_bitrate: str = None,
+    audio_channels: int = None,
+    audio_sample_rate: int = None,
+    audio_codec: str = None,
+    codec: str = None,
+    preset: str = None,
+    crf: str = None
 ) -> dict:
     """Export a CapCut draft to video using FFmpeg.
 
@@ -338,7 +356,13 @@ def export_to_video(
         height=height,
         fps=(fps if fps is not None else 30),
         video_bitrate=video_bitrate or "8000k",
-        audio_bitrate=audio_bitrate or "128k"
+        audio_bitrate=audio_bitrate or "128k",
+        audio_codec=audio_codec or "aac",
+        audio_channels=(audio_channels if audio_channels is not None else 2),
+        audio_sample_rate=(audio_sample_rate if audio_sample_rate is not None else 44100),
+        codec=codec or "libx264",
+        preset=preset or "medium",
+        crf=crf or "23"
     )
 
     # Call implementation

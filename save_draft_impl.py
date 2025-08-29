@@ -94,11 +94,14 @@ def save_draft_background(draft_id, draft_folder, task_id):
 
         logger.info(f"Starting to save draft: {draft_id}")
         # Save draft
+        # Get template from CapCutAPI package directory instead of CapCut's space
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        draft_folder_for_duplicate = draft.Draft_folder(output_base)
-        # Choose different template directory based on configuration
-        template_dir = "template" if IS_CAPCUT_ENV else "template_jianying"
-        draft_folder_for_duplicate.duplicate_as_template(template_dir, draft_id)
+        template_dir_name = "template" if IS_CAPCUT_ENV else "template_jianying"
+        template_source = os.path.join(current_dir, template_dir_name)
+
+        # Create target directory and copy template directly
+        out_draft_path = os.path.join(output_base, draft_id)
+        shutil.copytree(template_source, out_draft_path, dirs_exist_ok=True)
         
         # Update task status
         update_task_field(task_id, "message", "Updating media file metadata")
