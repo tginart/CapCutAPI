@@ -245,9 +245,6 @@ TRANSITION_NAME_LUT = {
     'pull_in': 'Pull_in',
     'pullin': 'Pull_in',
     'pull_in': 'Pull_in',
-    'pull out': 'Pull_Out',
-    'pull_out': 'Pull_Out',
-    'pullout': 'Pull_Out',
 
     # Common transitions
     'dissolve': 'Dissolve',
@@ -271,7 +268,6 @@ TRANSITION_NAME_LUT = {
 SUPPORTED_IN_CUSTOM_EXPORTER = {
     # Implemented transitions
     'Pull_in': True,
-    'Pull_Out': True,
     # ONLY pull in/out transitions are supported in the custom exporter
     # 'Dissolve': True,
     # 'Black_Fade': True,

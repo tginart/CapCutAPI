@@ -6,6 +6,7 @@ import time
 from settings.local import IS_CAPCUT_ENV
 from util import generate_draft_url, is_windows_path, url_to_hash
 from pyJianYingDraft import trange, Clip_settings
+from pyJianYingDraft.metadata.capcut_transition_meta import TRANSITION_NAME_LUT
 import re
 from typing import Optional, Dict
 from pyJianYingDraft import exceptions
@@ -214,16 +215,40 @@ def add_image_impl(
     
     # Add transition effect
     if transition:
+        enum_name = transition  # Fallback for error message
         try:
+            # Normalize transition name: case-insensitive, handle spaces/underscores
+            normalized_transition = transition.strip().lower().replace(' ', '_')
+
+            # Use centralized LUT for transition name mapping
+            enum_name = TRANSITION_NAME_LUT.get(normalized_transition, normalized_transition)
+
+            print(f"[TRANSITION] Requested='{transition}' normalized='{normalized_transition}' enum_name='{enum_name}' duration={transition_duration}s")
+
+            # Get transition type
             if IS_CAPCUT_ENV:
-                transition_type = getattr(draft.CapCut_Transition_type, transition)
+                transition_type = getattr(draft.CapCut_Transition_type, enum_name)
             else:
-                transition_type = getattr(draft.Transition_type, transition)
-            # Convert seconds to microseconds (multiply by 1000000)
-            duration_microseconds = int(transition_duration * 1000000) if transition_duration is not None else None
+                transition_type = getattr(draft.Transition_type, enum_name)
+
+            # Set transition duration (convert to microseconds)
+            duration_microseconds = int((transition_duration or 0.0) * 1e6)
+
+            # Add transition
             image_segment.add_transition(transition_type, duration=duration_microseconds)
+            # Persist normalized enum name and transition duration (seconds) on the segment for the exporter
+            try:
+                setattr(image_segment, '_cc_transition_enum_name', enum_name)
+                setattr(image_segment, '_cc_transition_duration_sec', float(transition_duration or 0.0))
+                print(
+                    f"[TRANSITION] Applied enum='{enum_name}' duration_sec={float(transition_duration or 0.0):.3f} at start={start}s"
+                )
+            except Exception:
+                # Non-fatal if attributes cannot be set
+                print("[TRANSITION][WARN] Could not persist transition metadata on image segment")
         except AttributeError:
-            raise ValueError(f"Warning: Unsupported transition type {transition}, this parameter will be ignored")
+            print(f"[TRANSITION][WARN] Unsupported transition type: '{transition}' (normalized='{normalized_transition}' -> enum='{enum_name}')")
+            raise ValueError(f"Unsupported transition type: {transition} (normalized to '{enum_name}'), transition setting skipped")
     
     # Add mask effect
     if mask_type:

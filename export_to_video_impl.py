@@ -834,7 +834,7 @@ class VideoCompositionEngine:
                                     )
 
                                     if d > 1e-3:
-                                        # Labels
+                                        # Labels for tails/heads and transition
                                         a_tail = f"v{prev_loop_index}_tail"
                                         b_head = f"v{i}_head"
                                         trans_label = f"v{prev_loop_index}_{i}_trans"
@@ -844,42 +844,51 @@ class VideoCompositionEngine:
                                         filter_parts.append(f"[v{prev_loop_index}]trim={eff_duration_prev - d}:{eff_duration_prev},setpts=PTS-STARTPTS[{a_tail}]")
                                         filter_parts.append(f"[v{i}]trim=0:{d},setpts=PTS-STARTPTS[{b_head}]")
 
-                                        # Compose each trimmed stream onto a transparent full-canvas background
-                                        # at its correct (transform_x, transform_y) position, so xfade output aligns.
+                                        # Determine window [t0, startB]
+                                        t0 = max(0.0, segment.start_time - d)
+
+                                        # Split current composed base into two window copies and a carry stream
+                                        baseA = f"v{prev_loop_index}_{i}_baseA"
+                                        baseB = f"v{prev_loop_index}_{i}_baseB"
+                                        carry = f"v{prev_loop_index}_{i}_carry"
+                                        prev_layer_after_b = layer_outputs[-1]
+                                        filter_parts.append(f"{prev_layer_after_b}split=3[{baseA}][{baseB}][{carry}]")
+
+                                        # Trim each base copy to the transition window and reset PTS
+                                        baseA_w = f"v{prev_loop_index}_{i}_baseA_w"
+                                        baseB_w = f"v{prev_loop_index}_{i}_baseB_w"
+                                        filter_parts.append(f"[{baseA}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseA_w}]")
+                                        filter_parts.append(f"[{baseB}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseB_w}]")
+
+                                        # Overlay the trimmed tails/heads onto the windowed base copies to get full frames
                                         ox_prev, oy_prev = self._overlay_coords(prev_seg)
                                         ox_curr, oy_curr = self._overlay_coords(segment)
-                                        a_bg = f"v{prev_loop_index}_{i}_abg"
-                                        b_bg = f"v{prev_loop_index}_{i}_bbg"
-                                        a_canv = f"v{prev_loop_index}_{i}_acanv"
-                                        b_canv = f"v{prev_loop_index}_{i}_bcanv"
-                                        filter_parts.append(
-                                            f"color=s={self.width}x{self.height}:r={self.fps}:d={d},format=rgba,geq=a='0'[{a_bg}]"
-                                        )
-                                        filter_parts.append(
-                                            f"[{a_bg}][{a_tail}]overlay={ox_prev}-w/2:{oy_prev}-h/2[{a_canv}]"
-                                        )
-                                        filter_parts.append(
-                                            f"color=s={self.width}x{self.height}:r={self.fps}:d={d},format=rgba,geq=a='0'[{b_bg}]"
-                                        )
-                                        filter_parts.append(
-                                            f"[{b_bg}][{b_head}]overlay={ox_curr}-w/2:{oy_curr}-h/2[{b_canv}]"
-                                        )
+                                        A_full = f"v{prev_loop_index}_{i}_A_full"
+                                        B_full = f"v{prev_loop_index}_{i}_B_full"
+                                        filter_parts.append(f"[{baseA_w}][{a_tail}]overlay={ox_prev}-w/2:{oy_prev}-h/2[{A_full}]")
+                                        filter_parts.append(f"[{baseB_w}][{b_head}]overlay={ox_curr}-w/2:{oy_curr}-h/2[{B_full}]")
 
-                                        # Choose xfade transition type
+                                        # Normalize to constant frame rate and pixel format for xfade stability
+                                        A_full_cfr = f"v{prev_loop_index}_{i}_A_full_cfr"
+                                        B_full_cfr = f"v{prev_loop_index}_{i}_B_full_cfr"
+                                        filter_parts.append(f"[{A_full}]fps=fps={self.fps},format=yuv420p[{A_full_cfr}]")
+                                        filter_parts.append(f"[{B_full}]fps=fps={self.fps},format=yuv420p[{B_full_cfr}]")
+
+                                        # Choose xfade transition type and run between full frames
                                         xfade_type = 'zoomin' if is_pull_in else 'zoomout'
-                                        filter_parts.append(f"[{a_canv}][{b_canv}]xfade=transition={xfade_type}:duration={d}:offset=0[{trans_label}]")
+                                        filter_parts.append(f"[{A_full_cfr}][{B_full_cfr}]xfade=transition={xfade_type}:duration={d}:offset=0[{trans_label}]")
                                         print(
-                                            f"[XFADE] Built xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={d:.3f}s"
+                                            f"[XFADE] Built full-frame xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={d:.3f}s"
                                         )
 
-                                        # Align to global timeline: transition window is [startB - d, startB]
-                                        t0 = max(0.0, segment.start_time - d)
-                                        filter_parts.append(f"[{trans_label}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
+                                        # Remove black fill from xfade by keying out near-black and creating alpha
+                                        trans_label_ck = f"{trans_label}_ck"
+                                        filter_parts.append(f"[{trans_label}]format=rgba,chromakey=0x000000:0.02:0.0[{trans_label_ck}]")
 
-                                        # Overlay the transition stream above current layer for the overlap window
-                                        prev_layer_after_b = layer_outputs[-1]
+                                        # Align to global timeline and overlay only during the transition window
+                                        filter_parts.append(f"[{trans_label_ck}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
                                         filter_parts.append(
-                                            f"{prev_layer_after_b}[{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
+                                            f"[{carry}][{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
                                         )
                                         print(
                                             f"[XFADE] Overlaying transition window [{t0:.3f}, {segment.start_time:.3f}]s on track='{segment.track_name}'"
@@ -1451,7 +1460,7 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
 
         # Transparent canvas with a true zero alpha plane
         canvas = (
-            f"color=s={engine.width}x{engine.height}:r={engine.fps}:d={duration},format=rgba,geq=a='0'"
+            f"color=s={engine.width}x{engine.height}:r={engine.fps}:d={duration}:c=black@0.0,format=rgba"
         )
 
         # Build text filter with background support
