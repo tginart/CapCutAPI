@@ -209,6 +209,7 @@ from settings.local import IS_CAPCUT_ENV, DRAFT_CACHE_DIR
 from draft_cache import DRAFT_CACHE
 from save_draft_impl import query_script_impl
 from util import generate_draft_url
+from pyJianYingDraft.metadata.capcut_transition_meta import TRANSITION_NAME_LUT
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -730,10 +731,11 @@ class VideoCompositionEngine:
                                 if trans_dur is None:
                                     trans_dur = getattr(getattr(segment, 'segment_data', None), 'transition_duration', None)
 
-                                # Normalize
-                                trans_name_norm = str(trans_name).strip().lower() if isinstance(trans_name, str) else ''
-                                is_pull_in = trans_name_norm in ['pull in', 'pull_in', 'pullin']
-                                is_pull_out = trans_name_norm in ['pull out', 'pull_out', 'pullout']
+                                # Normalize and check using centralized LUT
+                                trans_name_norm = str(trans_name).strip().lower().replace(' ', '_') if isinstance(trans_name, str) else ''
+                                enum_name = TRANSITION_NAME_LUT.get(trans_name_norm, trans_name_norm)
+                                is_pull_in = enum_name == 'Pull_in'
+                                is_pull_out = enum_name == 'Pull_Out'
 
                                 # Only when clips butt-join to avoid gaps
                                 joins_cleanly = abs(prev_seg.end_time - segment.start_time) < 1e-4

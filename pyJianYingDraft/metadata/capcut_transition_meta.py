@@ -236,3 +236,49 @@ class CapCut_Transition_type(Effect_enum):
     """默认时长: 0.47s"""
     Squeeze_1    = Transition_meta("Squeeze", False, "6751618376780485133", "FA59E619-C9AD-4c39-9205-9998FC6C9B48", "337d4cd9be4e1860bd1e7e50a9a93841", 0.466666, False)
     """默认时长: 0.47s"""
+
+
+# LUT for normalizing user-provided transition names to exact enum names
+# Handles case-insensitive, spaces/underscores variations
+TRANSITION_NAME_LUT = {
+    # Pull In/Out variations
+    'pull_in': 'Pull_in',
+    'pullin': 'Pull_in',
+    'pull_in': 'Pull_in',
+    'pull out': 'Pull_Out',
+    'pull_out': 'Pull_Out',
+    'pullout': 'Pull_Out',
+
+    # Common transitions
+    'dissolve': 'Dissolve',
+    'fade': 'Black_Fade',
+    'fade_black': 'Black_Fade',
+    'black_fade': 'Black_Fade',
+
+    # Wipe variations
+    'wipe_left': 'Wipe_Left',
+    'wipe right': 'Wipe_Right',
+    'wipe_right': 'Wipe_Right',
+    'wipe_up': 'Wipe_Up',
+    'wipe up': 'Wipe_Up',
+    'wipe_down': 'Wipe_Up',  # Assuming Wipe_Up is for up, may need to adjust
+
+    # Add more mappings as needed for other transitions
+}
+
+# LUT indicating which transitions are supported in the custom exporter
+# Only these will work in export_to_video_impl.py
+SUPPORTED_IN_CUSTOM_EXPORTER = {
+    # Implemented transitions
+    'Pull_in': True,
+    'Pull_Out': True,
+    # ONLY pull in/out transitions are supported in the custom exporter
+    # 'Dissolve': True,
+    # 'Black_Fade': True,
+    # 'Wipe_Left': True,
+    # 'Wipe_Right': True,
+    # 'Wipe_Up': True,
+
+    # Default to False for all others
+    # Add more as we implement them in the exporter
+}

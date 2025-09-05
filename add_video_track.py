@@ -5,6 +5,7 @@ import time
 from settings.local import IS_CAPCUT_ENV
 from util import generate_draft_url, is_windows_path, url_to_hash
 from pyJianYingDraft import trange, Clip_settings
+from pyJianYingDraft.metadata.capcut_transition_meta import TRANSITION_NAME_LUT
 import re
 from typing import Optional, Dict
 from pyJianYingDraft import exceptions
@@ -195,20 +196,27 @@ def add_video_track(
     
     # Add transition effect
     if transition:
+        enum_name = transition  # Fallback for error message
         try:
+            # Normalize transition name: case-insensitive, handle spaces/underscores
+            normalized_transition = transition.strip().lower().replace(' ', '_')
+
+            # Use centralized LUT for transition name mapping
+            enum_name = TRANSITION_NAME_LUT.get(normalized_transition, normalized_transition)
+
             # Get transition type
             if IS_CAPCUT_ENV:
-                transition_type = getattr(draft.CapCut_Transition_type, transition)
+                transition_type = getattr(draft.CapCut_Transition_type, enum_name)
             else:
-                transition_type = getattr(draft.Transition_type, transition)
-            
+                transition_type = getattr(draft.Transition_type, enum_name)
+
             # Set transition duration (convert to microseconds)
             duration_microseconds = int(transition_duration * 1e6)
-            
+
             # Add transition
             video_segment.add_transition(transition_type, duration=duration_microseconds)
         except AttributeError:
-            raise ValueError(f"Unsupported transition type: {transition}, transition setting skipped")
+            raise ValueError(f"Unsupported transition type: {transition} (normalized to '{enum_name}'), transition setting skipped")
     
     # Add mask effect
     if mask_type:
