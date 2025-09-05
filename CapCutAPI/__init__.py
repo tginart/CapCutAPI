@@ -239,6 +239,90 @@ def parse_yaml_config(filepath: str):
             call_args = build_args(step_args or {})
             call_args.setdefault("draft_id", draft_id)
 
+            # Convert YAML text_styles dicts → TextStyleRange objects for add_text
+            if op_name == "add_text" and isinstance(call_args.get("text_styles"), list) and call_args["text_styles"]:
+                try:
+                    from pyJianYingDraft.text_segment import TextStyleRange, Text_style, Text_border
+                    from util import hex_to_rgb
+
+                    converted_ranges = []
+                    for style_data in call_args["text_styles"]:
+                        # Skip if already a TextStyleRange (programmatic callers)
+                        if hasattr(style_data, "__class__") and style_data.__class__.__name__ == "TextStyleRange":
+                            converted_ranges.append(style_data)
+                            continue
+
+                        if not isinstance(style_data, dict):
+                            raise ValueError(f"text_styles entries must be dicts or TextStyleRange; got {type(style_data).__name__}")
+
+                        start_pos = int(style_data.get("start", 0))
+                        end_pos = int(style_data.get("end", 0))
+
+                        # Support nested style dict or flat keys
+                        style_dict = style_data.get("style", style_data)
+
+                        size = style_dict.get("size", call_args.get("font_size"))
+                        bold = bool(style_dict.get("bold", False))
+                        italic = bool(style_dict.get("italic", False))
+                        underline = bool(style_dict.get("underline", False))
+                        color_hex = style_dict.get("color", call_args.get("font_color", "#FFFFFF"))
+                        alpha = style_dict.get("alpha", call_args.get("font_alpha", 1.0))
+                        align = style_dict.get("align", 1)
+                        vertical = style_dict.get("vertical", call_args.get("vertical", False))
+                        letter_spacing = style_dict.get("letter_spacing", 0)
+                        line_spacing = style_dict.get("line_spacing", 0)
+
+                        rgb_color = hex_to_rgb(color_hex)
+
+                        style_obj = Text_style(
+                            size=size,
+                            bold=bold,
+                            italic=italic,
+                            underline=underline,
+                            color=rgb_color,
+                            alpha=alpha,
+                            align=align,
+                            vertical=vertical,
+                            letter_spacing=letter_spacing,
+                            line_spacing=line_spacing,
+                        )
+
+                        # Border: support nested border dict or flat border_* keys
+                        border_dict = style_data.get("border", {}) or {}
+                        if not border_dict and any(k in style_data for k in ("border_width", "border_color", "border_alpha")):
+                            border_dict = {
+                                "width": style_data.get("border_width", 0.0),
+                                "color": style_data.get("border_color", call_args.get("border_color", "#000000")),
+                                "alpha": style_data.get("border_alpha", call_args.get("border_alpha", 1.0)),
+                            }
+
+                        border_obj = None
+                        try:
+                            width_val = float(border_dict.get("width", 0.0))
+                        except Exception:
+                            width_val = 0.0
+                        if width_val > 0:
+                            border_obj = Text_border(
+                                alpha=border_dict.get("alpha", call_args.get("border_alpha", 1.0)),
+                                color=hex_to_rgb(border_dict.get("color", call_args.get("border_color", "#000000"))),
+                                width=border_dict.get("width", call_args.get("border_width", 0.0)),
+                            )
+
+                        font_str = style_data.get("font", call_args.get("font"))
+
+                        style_range = TextStyleRange(
+                            start=start_pos,
+                            end=end_pos,
+                            style=style_obj,
+                            border=border_obj,
+                            font_str=font_str,
+                        )
+                        converted_ranges.append(style_range)
+
+                    call_args["text_styles"] = converted_ranges
+                except Exception as conv_e:
+                    raise conv_e.__class__(f"Failed to convert YAML text_styles to TextStyleRange: {conv_e}") from conv_e
+
             result = op_map[op_name](**call_args)
         except Exception as e:
             # Enrich error with step index, operation name, and step config for easier debugging

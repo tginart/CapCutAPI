@@ -240,14 +240,14 @@ steps:
     - **border_color** (string, default "#000000"): Border color
     - **border_width** (float, default 0.0): Border width; 0 disables border
   - Background:
-    - **background_color** (string, default "#000000")
-    - **background_style** (int, default 1)
-    - **background_alpha** (float, default 0.0): 0 disables background
-    - **background_round_radius** (float, default 0.0)
-    - **background_height** (float, default 0.14)
-    - **background_width** (float, default 0.14)
-    - **background_horizontal_offset** (float, default 0.5)
-    - **background_vertical_offset** (float, default 0.5)
+    - **background_alpha** (float, default 0.0): Opacity of a box behind the text; 0 disables. When > 0, a rectangle is drawn behind the text.
+    - **background_color** (string, default "#000000"): Color of the background box. In the exporter this maps to drawtext `boxcolor` with the alpha above applied.
+    - **background_round_radius** (float, default 0.0): Rounded-corner radius for the background box. Not supported by the exporter yet; setting > 0 will raise an error during export.
+    - **background_width** (float, default 0.14): Intended logical width of the background box as a fraction of canvas width. Not used by the current exporter; the box auto-sizes to the text's bounding box.
+    - **background_height** (float, default 0.14): Intended logical height of the background box as a fraction of canvas height. Not used by the current exporter; the box auto-sizes to the text's bounding box.
+    - **background_horizontal_offset** (float, default 0.5): Intended horizontal offset of the background box relative to the text's center. Not used by the current exporter; the background is anchored to the text position.
+    - **background_vertical_offset** (float, default 0.5): Intended vertical offset of the background box relative to the text's center. Not used by the current exporter; the background is anchored to the text position.
+    - **background_style** (int, default 1): Reserved for future style presets. Not used by the current exporter.
   - Shadow:
     - **shadow_enabled** (bool, default false)
     - **shadow_alpha** (float, default 0.9)
@@ -289,7 +289,34 @@ steps:
 ```
 **Available Fonts:**
 
-```['Amigate', 'Anson', 'BlackMango_Black', 'BlackMango_Regular', 'Bungee_Regular', 'CC_Captial', 'CC_Moderno', 'Cabin_Rg', 'Caveat_Regular', 'Climate', 'Coiny_Regular', 'DMSans_BoldItalic', 'Exo', 'Gallery', 'Giveny', 'Grandstander_Regular', 'Gratefulness', 'HarmonyOS_Sans_SC_Bold', 'HarmonyOS_Sans_SC_Medium', 'HarmonyOS_Sans_SC_Regular', 'HarmonyOS_Sans_TC_Bold', 'HarmonyOS_Sans_TC_Light', 'HarmonyOS_Sans_TC_Medium', 'HarmonyOS_Sans_TC_Regular', 'HeptaSlab_ExtraBold', 'HeptaSlab_Light', 'Huben', 'Ingram', 'Integrity', 'Inter_Black', 'JYruantang', 'JYshiduo', 'JYzhuqingting', 'Kanit_Black', 'Kanit_Regular', 'Koulen_Regular', 'LXGWWenKai_Bold', 'LXGWWenKai_Light', 'LXGWWenKai_Regular', 'Love', 'Luxury', 'Merry_Christmas', 'MiSans_Heavy', 'MiSans_Regular', 'Modern', 'MyFont凌渡哥哥简', 'Nunito', 'OldStandardTT_Regular', 'Pacifico_Regular', 'PlayfairDisplay_Bold', 'Plunct', 'Polly', 'Poppins_Bold', 'Poppins_Regular', 'RedHatDisplay_BoldItalic', 'RedHatDisplay_Light', 'ResourceHanRoundedCN_Md', 'ResourceHanRoundedCN_Nl', 'Roboto_BlkCn', 'SansitaSwashed_Regular', 'SecularOne_Regular', 'Signature', 'Soap', 'Sora_Bold', 'Sora_Regular', 'SourceHanSansCN_Bold', 'SourceHanSansCN_Light', 'SourceHanSansCN_Medium', 'SourceHanSansCN_Normal', 'SourceHanSansCN_Regular', 'SourceHanSansTW_Bold', 'SourceHanSansTW_Light', 'SourceHanSansTW_Medium', 'SourceHanSansTW_Normal', 'SourceHanSansTW_Regular', 'SourceHanSerifCN_Light', 'SourceHanSerifCN_Medium', 'SourceHanSerifCN_Regular', 'SourceHanSerifCN_SemiBold', 'SourceHanSerifTW_Bold', 'SourceHanSerifTW_Light', 'SourceHanSerifTW_Medium', 'SourceHanSerifTW_Regular', 'SourceHanSerifTW_SemiBold', 'Staatliches_Regular', 'Sunset', 'Thrive', 'Thunder', 'Tronica', 'Vintage', 'ZYLAA_Demure', 'ZYLantastic', 'ZYLullaby', 'ZYSilhouette', 'ZYWitty', 'ZY_Balloonbillow', 'ZY_Blossom', 'ZY_Brief', 'ZY_Courage', 'ZY_Daisy', 'ZY_Dexterous', 'ZY_Earnest', 'ZY_Elixir', 'ZY_Fabulous', 'ZY_Fantasy', 'ZY_Flourishing_Italic', 'ZY_Fortitude', 'ZY_Kindly_Breeze', 'ZY_Loyalty', 'ZY_Modern', 'ZY_Multiplicity', 'ZY_Panacea', 'ZY_Relax', 'ZY_Slender', 'ZY_Spunk', 'ZY_Squiggle', 'ZY_Starry', 'ZY_Timing', 'ZY_Trend', 'ZY_Vigorous', 'ZY_Vigorous_Medium', 'Zapfino']```
+```[
+    'Roboto_BlkCn',
+    'Poppins_Regular',
+    'Poppins_Bold',
+    'Nunito',
+    'PlayfairDisplay_Bold',
+    'Pacifico_Regular',
+    'Caveat_Regular',
+    'Grandstander_Regular',
+    'DMSans_BoldItalic',
+    'Exo',
+    'Cabin_Rg',
+    'Kanit_Regular',
+    'Kanit_Black',
+    'Staatliches_Regular',
+    'Bungee_Regular',
+    'Inter_Black',
+    'SansitaSwashed_Regular',
+    'SecularOne_Regular',
+    'Sora_Regular',
+    'Zapfino',
+    'OldStandardTT_Regular',
+    'Coiny_Regular',
+    'HeptaSlab_ExtraBold',
+    'HeptaSlab_Light',
+    'Giveny'
+]
+```
 
 
 #### add_subtitle
@@ -416,7 +443,7 @@ steps:
   - Batch mode requires all three lists with equal length; otherwise error
   - Supported properties: `position_x`, `position_y`, `rotation`, `scale_x`, `scale_y`, `uniform_scale`, `alpha`, `saturation`, `contrast`, `brightness`, `volume`
   - Value formats:
-    - `position_x`/`position_y`: normalized coordinates (e.g., "0.0", "-0.3")
+    - `position_x`/`position_y`: normalized coordinates (accepted range `[-10, 10]`; typical canvas range is `[-1, 1]`, e.g., "0.0", "-0.3")
     - `rotation`: degrees (e.g., "45deg" or numeric)
     - `scale_x`/`scale_y`/`uniform_scale`: numeric factors (e.g., "1.2")
     - `alpha`, `volume`: percent (e.g., "50%") or numeric 0..1

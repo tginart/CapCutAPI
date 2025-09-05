@@ -213,12 +213,247 @@ from util import generate_draft_url
 # Setup logging
 logger = logging.getLogger(__name__)
 
+# Optional font support via pyfonts
+try:
+    # pyfonts is expected to be provided in the environment
+    # Different versions may expose different helpers; we will try a few APIs at runtime
+    import pyfonts  # type: ignore
+    _HAS_PYFONTS = True
+except Exception:
+    pyfonts = None  # type: ignore
+    _HAS_PYFONTS = False
+
 # --- Global calibration for text sizing (CapCut-style size → pixel size) ---
 # Defaults estimated from reference at canvas height 1920px:
 #   size 12 ≈ 60px, size 8 ≈ 40px
 CC_TEXT_PX_AT_SIZE12: float = 60.0
 CC_TEXT_PX_AT_SIZE8: float = 40.0
 CC_TEXT_BASE_HEIGHT: float = 1920.0
+
+# CapCut font → closest Google Font family mapping
+# Note: Only includes fonts that successfully resolve via Google Fonts API
+CAPCUT_TO_GOOGLE_FONT = {
+    'Roboto_BlkCn': 'Roboto Condensed',
+    'Poppins_Regular': 'Poppins',
+    'Poppins_Bold': 'Poppins',
+    'Nunito': 'Nunito',
+    'PlayfairDisplay_Bold': 'Playfair Display',
+    'Pacifico_Regular': 'Pacifico',
+    'Caveat_Regular': 'Caveat',
+    'Grandstander_Regular': 'Grandstander',
+    'DMSans_BoldItalic': 'DM Sans',
+    'Exo': 'Exo',
+    'Cabin_Rg': 'Cabin',
+    'Kanit_Regular': 'Kanit',
+    'Kanit_Black': 'Kanit',
+    'Staatliches_Regular': 'Staatliches',
+    'Bungee_Regular': 'Bungee',
+    'Inter_Black': 'Inter',
+    # Removed problematic mappings that cause HTTP 400 errors:
+    # 'SansitaSwashed_Regular': 'Sansita Swashed',  # API rejects "SansitaSwashed" family name
+    # 'SecularOne_Regular': 'Secular One',          # API rejects "SecularOne" family name  
+    'Sora_Regular': 'Sora',
+    'Zapfino': 'Great Vibes',
+    # 'OldStandardTT_Regular': 'Old Standard TT',   # API rejects "OldStandardTT" family name
+    'Coiny_Regular': 'Coiny',
+    # 'HeptaSlab_ExtraBold': 'Hepta Slab',          # API rejects "HeptaSlab" family name
+    # 'HeptaSlab_Light': 'Hepta Slab',              # API rejects "HeptaSlab" family name
+    'Giveny': 'Bodoni Moda',
+}
+
+# Explanation: This mapping translates CapCut-specific font identifiers to their closest
+# Google Fonts family equivalents. During rendering, we use this to resolve an actual
+# local font file via the optional 'pyfonts' helper so FFmpeg drawtext can find a TTF/OTF.
+# If a CapCut font is not listed here, we fall back to using the given name directly as
+# a best-effort pass-through.
+
+def _infer_font_style_tokens(capcut_font_name: Optional[str], style_obj: Optional[object]) -> tuple[str, bool]:
+    """Infer weight token (e.g., 'black','bold','regular','light') and italic from CapCut font name and style.
+
+    Returns (weight_token, italic)
+    """
+    italic = False
+    weight_token = 'regular'
+
+    # Inspect style attributes if present
+    if style_obj is not None:
+        try:
+            italic = bool(getattr(style_obj, 'italic', False)) or bool(getattr(style_obj, 'is_italic', False))
+        except Exception:
+            pass
+        try:
+            # Numeric weight if provided
+            w = getattr(style_obj, 'weight', None)
+            if isinstance(w, (int, float)):
+                if w >= 900:
+                    weight_token = 'black'
+                elif w >= 800:
+                    weight_token = 'extra-bold'
+                elif w >= 700:
+                    weight_token = 'bold'
+                elif w >= 600:
+                    weight_token = 'semi-bold'
+                elif w >= 500:
+                    weight_token = 'medium'
+                elif w >= 300:
+                    weight_token = 'light'
+                elif w >= 200:
+                    weight_token = 'extra-light'
+                else:
+                    weight_token = 'regular'
+        except Exception:
+            pass
+
+    # Parse from CapCut font code/name
+    name = (capcut_font_name or '').lower()
+    if 'italic' in name:
+        italic = True or italic
+    if any(tok in name for tok in ['black', 'blk']):
+        weight_token = 'black'
+    elif 'extrabold' in name or 'extra_bold' in name or 'xtrabold' in name:
+        weight_token = 'extra-bold'
+    elif 'semibold' in name or 'semi_bold' in name:
+        weight_token = 'semi-bold'
+    elif 'bold' in name:
+        weight_token = 'bold'
+    elif 'medium' in name:
+        weight_token = 'medium'
+    elif 'extralight' in name or 'extra_light' in name:
+        weight_token = 'extra-light'
+    elif 'light' in name:
+        weight_token = 'light'
+    elif 'thin' in name:
+        weight_token = 'thin'
+
+    return weight_token, italic
+
+def _resolve_font_arguments(style_obj: Optional[object], segment_obj: Optional[object] = None) -> list[str]:
+    """Resolve drawtext font arguments using pyfonts if available.
+
+    Returns a list of drawtext arguments like [":fontfile='...'"] or [":font='Family'"].
+    Raises ValueError if font resolution fails.
+    """
+    # Extract a CapCut style font name if present
+    capcut_font_name: Optional[str] = None
+    if style_obj is not None:
+        for attr in ('font', 'font_name', 'family', 'fontFamily', 'font_family'):
+            try:
+                v = getattr(style_obj, attr, None)
+                if isinstance(v, str) and v.strip():
+                    capcut_font_name = v.strip()
+                    break
+            except Exception as e:
+                raise ValueError(f"Failed to extract font name from style object: {e}") from e
+
+    # Debug: log the incoming style object to aid troubleshooting in development
+    print(f"style_obj: {style_obj}")
+    # Debug: pause here when running interactively to inspect font resolution behavior
+    # breakpoint()
+    # If not provided, try fallbacks from the segment object (global or per-range font)
+    if not capcut_font_name and segment_obj is not None:
+        try:
+            seg_font = getattr(segment_obj, 'font', None)
+            seg_font_name = getattr(seg_font, 'name', None) if seg_font is not None else None
+            if isinstance(seg_font_name, str) and seg_font_name.strip():
+                capcut_font_name = seg_font_name.strip()
+                print(f"[FONTDBG] using fallback from segment_data.font: {capcut_font_name}")
+        except Exception:
+            pass
+
+        # Fallback to first per-range font if any
+        if not capcut_font_name:
+            try:
+                ranges = getattr(segment_obj, 'text_styles', []) or []
+                for r in ranges:
+                    rf = getattr(r, 'font', None)
+                    rf_name = getattr(rf, 'name', None) if rf is not None else None
+                    if isinstance(rf_name, str) and rf_name.strip():
+                        capcut_font_name = rf_name.strip()
+                        print(f"[FONTDBG] using fallback from first text_styles font: {capcut_font_name}")
+                        break
+            except Exception:
+                pass
+
+    # If still not provided, we cannot resolve
+    if not capcut_font_name:
+        print("[FONTDBG] capcut_font_name missing; style_obj and segment fallbacks had no font-like attrs")
+        raise ValueError("No font name specified in style object")
+
+    # Check if pyfonts is available
+    if not _HAS_PYFONTS:
+        raise ValueError(f"pyfonts is required for font '{capcut_font_name}' but is not installed. Please install with: pip install pyfonts")
+
+    # Map to Google Font family with normalization (underscore/hyphen and base family fallback)
+    gf_family = CAPCUT_TO_GOOGLE_FONT.get(capcut_font_name)
+    if not gf_family:
+        alt_key = capcut_font_name.replace('-', '_')
+        gf_family = CAPCUT_TO_GOOGLE_FONT.get(alt_key)
+    if not gf_family:
+        base_key = capcut_font_name.split('-', 1)[0]
+        gf_family = CAPCUT_TO_GOOGLE_FONT.get(base_key, base_key)
+    print(f"[FONTDBG] font map: '{capcut_font_name}' -> '{gf_family}'")
+    weight_token, italic = _infer_font_style_tokens(capcut_font_name, style_obj)
+
+    # Attempt resolution via pyfonts
+    fontfile_path: Optional[str] = None
+    resolution_error = None
+
+    # Common API: pyfonts.load_google_font(name, weight=..., italic=...)
+    if hasattr(pyfonts, 'load_google_font'):
+        try:
+            font_obj = pyfonts.load_google_font(gf_family, weight=weight_token, italic=italic)  # type: ignore
+            # Accept direct path, or object with path-like attribute
+            if isinstance(font_obj, str) and os.path.exists(font_obj):
+                fontfile_path = font_obj
+            else:
+                # Handle matplotlib.font_manager.FontProperties objects
+                if hasattr(font_obj, 'get_file'):
+                    try:
+                        p = font_obj.get_file()
+                        if isinstance(p, str) and os.path.exists(p):
+                            fontfile_path = p
+                    except Exception:
+                        pass
+                
+                # Handle other object types with path attributes  
+                if not fontfile_path:
+                    for attr in ('path', 'file', 'filename', 'fname', 'ttf_path', 'otf_path'):
+                        p = getattr(font_obj, attr, None)
+                        if isinstance(p, str) and os.path.exists(p):
+                            fontfile_path = p
+                            break
+        except Exception as e:
+            resolution_error = f"pyfonts.load_google_font failed for '{gf_family}' (weight={weight_token}, italic={italic}): {e}"
+
+    # Alternative API: pyfonts.get_font_path(name, weight=..., italic=...)
+    if fontfile_path is None and hasattr(pyfonts, 'get_font_path'):
+        try:
+            p = pyfonts.get_font_path(gf_family, weight=weight_token, italic=italic)  # type: ignore
+            if isinstance(p, str) and os.path.exists(p):
+                fontfile_path = p
+        except Exception as e:
+            if resolution_error:
+                resolution_error += f"; pyfonts.get_font_path also failed: {e}"
+            else:
+                resolution_error = f"pyfonts.get_font_path failed for '{gf_family}' (weight={weight_token}, italic={italic}): {e}"
+
+    if not fontfile_path:
+        error_msg = f"Could not resolve font file for '{capcut_font_name}' (mapped to '{gf_family}', weight={weight_token}, italic={italic})"
+        if resolution_error:
+            error_msg += f": {resolution_error}"
+        raise ValueError(error_msg)
+
+    # Verify the font file exists
+    if not os.path.exists(fontfile_path):
+        raise ValueError(f"Resolved font file does not exist: {fontfile_path}")
+
+    # Escape for filtergraph
+    ff = (
+        fontfile_path
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+    )
+    return [f":fontfile='{ff}'"]
 
 @dataclass
 class VideoExportConfig:
@@ -259,7 +494,8 @@ class VideoCompositionEngine:
         # Ensure a valid FPS for filter inputs; fallback to 30 if missing
         self.fps = getattr(script, 'fps', None) or 30
         self.duration_seconds = script.duration / 1_000_000.0  # Convert from microseconds
-
+        # Preprocess: flatten all tracks into a single list of time-placed segments.
+        # Each segment captures source media, target placement window, and z-order hints.
         # Extract all segments from all tracks
         self.segments: List[CompositionSegment] = []
         self._extract_segments()
@@ -303,6 +539,8 @@ class VideoCompositionEngine:
 
     def _extract_segments(self):
         """Extract all segments from the script and organize by time"""
+        # Tracks include native tracks and optionally imported tracks.
+        # A segment's target_timerange indicates when it should appear in the final timeline.
         track_list = list(self.script.tracks.values())
         track_list.extend(getattr(self.script, 'imported_tracks', []))
 
@@ -378,6 +616,8 @@ class VideoCompositionEngine:
             return 0, 0
         transform_x = getattr(clip_settings, 'transform_x', 0.0)
         transform_y = getattr(clip_settings, 'transform_y', 0.0)
+        # CapCut normalized space is [-1,1] in both axes with (0,0) being center.
+        # Convert to pixel coordinates centered on canvas for FFmpeg overlay.
         x_pixels = int((transform_x + 1.0) * self.width / 2)
         y_pixels = int((transform_y + 1.0) * self.height / 2)
         return x_pixels, y_pixels
@@ -401,6 +641,18 @@ class VideoCompositionEngine:
         input_files = []
         stream_index = 0
 
+        # Filtergraph structure overview:
+        # - We start with a synthetic black background labeled [bg].
+        # - For each visual segment (video/image/sticker/text), we produce a labeled video
+        #   stream, align it in time with setpts (relative to the global timeline), and
+        #   overlay it onto the running composition with enable=between(t,start,end).
+        # - Text can be drawn inline with drawtext, or pre-rendered to alpha-preserving
+        #   intermediates to reduce filter complexity. Pre-rendered text is then treated
+        #   as a normal video input and overlaid.
+        # - Audio segments are handled after video: each is trimmed, delayed into place,
+        #   optionally sped up/slowed via atempo, and then all tracks are mixed with amix.
+        # - The final labeled outputs are [final_video] and (if present) [final_audio].
+
         # Global ordered list by render index and in-track z_index
         ordered_segments = sorted(self.segments, key=lambda s: (s.render_index, s.z_index))
         # Audio segments handled after video composition
@@ -419,30 +671,138 @@ class VideoCompositionEngine:
         text_intermediate_files = getattr(self, 'text_intermediate_files', None)
         text_idx = 0
 
+        # Transition helper state: remember last video/image segment per track so we can
+        # build transitions between adjacent clips on the same track.
+        last_visual_segment_by_track: Dict[str, Tuple[int, CompositionSegment]] = {}
+        # Cache effective durations (after speed) for segments we process, keyed by loop index
+        effective_duration_by_loop_index: Dict[int, float] = {}
+
         for i, segment in enumerate(ordered_segments):
             if segment.track_type in ['video', 'image']:
                 if segment.material_data and hasattr(segment.material_data, 'remote_url'):
                     video_url = segment.material_data.remote_url
                     if video_url:
                         if self._is_image_media(segment):
+                            # Still images are fed as looping single-frame inputs with a fixed duration
                             seg_duration = max(0.0, segment.end_time - segment.start_time)
                             input_files.append(['-loop', '1', '-t', f"{seg_duration}", '-i', video_url])
                         else:
+                            # Video inputs are fed directly; trimming happens in filtergraph
                             input_files.append(video_url)
                         video_filter = self._generate_video_segment_filter(
                             segment, stream_index, i, temp_dir
                         )
                         if video_filter:
                             filter_parts.append(video_filter)
+                            # Shift segment into global timeline by adding a constant PTS offset
                             start = segment.start_time
                             filter_parts.append(f"[v{i}]setpts=PTS+{start}/TB[v{i}_ts]")
                             prev_layer = layer_outputs[-1]
                             ox, oy = self._overlay_coords(segment)
                             end = segment.end_time
+                            # Overlay with enable between start and end, aligning center to (ox,oy)
                             filter_parts.append(
                                 f"{prev_layer}[v{i}_ts]overlay={ox}-w/2:{oy}-h/2:enable='between(t\\,{start}\\,{end})'[layer{i+1}]"
                             )
                             layer_outputs.append(f"[layer{i+1}]")
+
+                            # --- Transition: If there is a previous visual segment on the same track,
+                            # and it requests a Pull In/Out transition into this segment, build a
+                            # zoomed crossfade for the overlap window and overlay it at correct z-order.
+                            # Determine this segment's effective duration (after speed)
+                            speed_obj = getattr(segment.segment_data, 'speed', None)
+                            speed_factor = getattr(speed_obj, 'speed', 1.0) if speed_obj is not None else 1.0
+                            try:
+                                speed_factor = float(speed_factor) if speed_factor else 1.0
+                            except Exception:
+                                speed_factor = 1.0
+                            eff_duration_curr = max(0.0, (segment.end_time - segment.start_time) / (speed_factor if speed_factor != 0 else 1.0))
+                            effective_duration_by_loop_index[i] = eff_duration_curr
+
+                            last_tuple = last_visual_segment_by_track.get(segment.track_name)
+                            if last_tuple is not None:
+                                prev_loop_index, prev_seg = last_tuple
+                                # Read transition parameters from previous segment (preferred) or current
+                                trans_name = getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
+                                if not trans_name:
+                                    trans_name = getattr(getattr(segment, 'segment_data', None), 'transition', None)
+                                trans_dur = getattr(getattr(prev_seg, 'segment_data', None), 'transition_duration', None)
+                                if trans_dur is None:
+                                    trans_dur = getattr(getattr(segment, 'segment_data', None), 'transition_duration', None)
+
+                                # Normalize
+                                trans_name_norm = str(trans_name).strip().lower() if isinstance(trans_name, str) else ''
+                                is_pull_in = trans_name_norm in ['pull in', 'pull_in', 'pullin']
+                                is_pull_out = trans_name_norm in ['pull out', 'pull_out', 'pullout']
+
+                                # Only when clips butt-join to avoid gaps
+                                joins_cleanly = abs(prev_seg.end_time - segment.start_time) < 1e-4
+
+                                if (is_pull_in or is_pull_out) and joins_cleanly and isinstance(trans_dur, (int, float)) and trans_dur > 0:
+                                    # Clamp overlap to available tails/heads (after speed)
+                                    prev_speed_obj = getattr(prev_seg.segment_data, 'speed', None)
+                                    prev_speed_factor = getattr(prev_speed_obj, 'speed', 1.0) if prev_speed_obj is not None else 1.0
+                                    try:
+                                        prev_speed_factor = float(prev_speed_factor) if prev_speed_factor else 1.0
+                                    except Exception:
+                                        prev_speed_factor = 1.0
+                                    eff_duration_prev = effective_duration_by_loop_index.get(prev_loop_index)
+                                    if eff_duration_prev is None:
+                                        eff_duration_prev = max(0.0, (prev_seg.end_time - prev_seg.start_time) / (prev_speed_factor if prev_speed_factor != 0 else 1.0))
+                                        effective_duration_by_loop_index[prev_loop_index] = eff_duration_prev
+
+                                    d = float(trans_dur)
+                                    d = max(0.0, min(d, eff_duration_prev, eff_duration_curr))
+
+                                    if d > 1e-3:
+                                        # Labels
+                                        a_tail = f"v{prev_loop_index}_tail"
+                                        b_head = f"v{i}_head"
+                                        trans_label = f"v{prev_loop_index}_{i}_trans"
+
+                                        # Trim last d seconds of A (prev) and first d seconds of B (curr)
+                                        # Both [vX] streams already include base transforms and speed effects
+                                        filter_parts.append(f"[v{prev_loop_index}]trim={eff_duration_prev - d}:{eff_duration_prev},setpts=PTS-STARTPTS[{a_tail}]")
+                                        filter_parts.append(f"[v{i}]trim=0:{d},setpts=PTS-STARTPTS[{b_head}]")
+
+                                        # Compose each trimmed stream onto a transparent full-canvas background
+                                        # at its correct (transform_x, transform_y) position, so xfade output aligns.
+                                        ox_prev, oy_prev = self._overlay_coords(prev_seg)
+                                        ox_curr, oy_curr = self._overlay_coords(segment)
+                                        a_bg = f"v{prev_loop_index}_{i}_abg"
+                                        b_bg = f"v{prev_loop_index}_{i}_bbg"
+                                        a_canv = f"v{prev_loop_index}_{i}_acanv"
+                                        b_canv = f"v{prev_loop_index}_{i}_bcanv"
+                                        filter_parts.append(
+                                            f"color=s={self.width}x{self.height}:r={self.fps}:d={d},format=rgba,geq=a='0'[{a_bg}]"
+                                        )
+                                        filter_parts.append(
+                                            f"[{a_bg}][{a_tail}]overlay={ox_prev}-w/2:{oy_prev}-h/2[{a_canv}]"
+                                        )
+                                        filter_parts.append(
+                                            f"color=s={self.width}x{self.height}:r={self.fps}:d={d},format=rgba,geq=a='0'[{b_bg}]"
+                                        )
+                                        filter_parts.append(
+                                            f"[{b_bg}][{b_head}]overlay={ox_curr}-w/2:{oy_curr}-h/2[{b_canv}]"
+                                        )
+
+                                        # Choose xfade transition type
+                                        xfade_type = 'zoomin' if is_pull_in else 'zoomout'
+                                        filter_parts.append(f"[{a_canv}][{b_canv}]xfade=transition={xfade_type}:duration={d}:offset=0[{trans_label}]")
+
+                                        # Align to global timeline: transition window is [startB - d, startB]
+                                        t0 = max(0.0, segment.start_time - d)
+                                        filter_parts.append(f"[{trans_label}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
+
+                                        # Overlay the transition stream above current layer for the overlap window
+                                        prev_layer_after_b = layer_outputs[-1]
+                                        filter_parts.append(
+                                            f"{prev_layer_after_b}[{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
+                                        )
+                                        layer_outputs.append(f"[layer{i+1}_tr]")
+
+                            # Update last segment for this track after processing this segment
+                            last_visual_segment_by_track[segment.track_name] = (i, segment)
                         stream_index += 1
 
             elif segment.track_type == 'sticker':
@@ -466,6 +826,7 @@ class VideoCompositionEngine:
                 end = segment.end_time
                 prev_layer = layer_outputs[-1]
                 if text_intermediate_files and text_idx < len(text_intermediate_files) and text_intermediate_files[text_idx]:
+                    # Use prerendered alpha video for text to simplify final filtergraph
                     input_files.append(text_intermediate_files[text_idx])
                     filter_parts.append(f"[{stream_index}:v]setpts=PTS+{start}/TB[text{i}_ts]")
                     filter_parts.append(
@@ -474,6 +835,7 @@ class VideoCompositionEngine:
                     layer_outputs.append(f"[layer{i+1}]")
                     stream_index += 1
                 else:
+                    # Fall back to inline drawtext on the current composed layer
                     text_filter = self._generate_text_segment_filter(segment, i, temp_dir)
                     if text_filter:
                         filter_parts.append(f"{prev_layer}{text_filter}[layer{i+1}]")
@@ -517,7 +879,8 @@ class VideoCompositionEngine:
         # Base stream
         base_stream = f"[{stream_index}:v]"
 
-        # Apply timing - trim to segment duration
+        # Apply timing - trim to segment duration or to source_timerange if provided.
+        # setpts=PTS-STARTPTS re-bases timestamps to start at 0 for subsequent transforms.
         duration = segment.end_time - segment.start_time
         source_range = getattr(segment_data, 'source_timerange', None)
 
@@ -538,18 +901,21 @@ class VideoCompositionEngine:
                 scale_x = getattr(clip_settings, 'scale_x', 1.0)
                 scale_y = getattr(clip_settings, 'scale_y', 1.0)
                 if scale_x != 1.0 or scale_y != 1.0:
+                    # Multiply input dimensions by normalized scale factors
                     transform_filters.append(f"scale=iw*{scale_x}:ih*{scale_y}")
 
             # Opacity
             if hasattr(clip_settings, 'alpha'):
                 alpha = getattr(clip_settings, 'alpha', 1.0)
                 if alpha != 1.0:
+                    # Ensure RGBA before adjusting alpha via colorchannelmixer
                     transform_filters.append(f"format=rgba,colorchannelmixer=aa={alpha}")
 
             # Rotation
             if hasattr(clip_settings, 'rotation'):
                 rotation = getattr(clip_settings, 'rotation', 0.0)
                 if rotation != 0.0:
+                    # FFmpeg rotate uses radians; CapCut rotation is in degrees
                     transform_filters.append(f"rotate={rotation}*PI/180")
 
             if transform_filters:
@@ -563,6 +929,7 @@ class VideoCompositionEngine:
         speed = getattr(segment_data, 'speed', None)
         if speed and hasattr(speed, 'speed') and speed.speed != 1.0:
             speed_factor = speed.speed
+            # Video speed-up/down by dividing PTS
             filters.append(f"[v{layer_index}]setpts=PTS/{speed_factor}[v{layer_index}]")
 
         # Apply effects if any
@@ -760,10 +1127,20 @@ class VideoCompositionEngine:
             f"drawtext=text='{text_content}'",
             f":fontsize={font_size}",
             f":fontcolor={font_color}",
+        ]
+
+        # Add font resolution arguments (fontfile or font family)
+        print("[FONTDBG] style has font attr?", hasattr(style, "font") if style else "no style",
+              "segment_data.font:", getattr(segment_data, "font", None),
+              "num text_styles:", len(getattr(segment_data, "text_styles", []) or []),
+              "range fonts:", [getattr(r, "font", None) for r in (getattr(segment_data, "text_styles", []) or [])])
+        text_filter_parts.extend(_resolve_font_arguments(style, segment_data))
+
+        text_filter_parts.extend([
             f":x={position_x}",
             f":y={position_y}",
             f":enable='between(t\\,{segment.start_time}\\,{segment.end_time})'"
-        ]
+        ])
 
         # Add background parameters if enabled
         if background_enabled:
@@ -802,6 +1179,7 @@ class VideoCompositionEngine:
         # Shift audio into the global timeline so playback starts at target start
         start_ms = int(segment.start_time * 1000)
         if start_ms > 0:
+            # adelay expects milliseconds; all=1 delays all channels equally
             filters.append(f"[a{layer_index}]adelay={start_ms}:all=1[a{layer_index}]")
 
         # Apply speed effect (atempo)
@@ -875,6 +1253,7 @@ class VideoCompositionEngine:
             # No audio streams, create silent audio
             silent_input = f"anoisesrc=d=0:c=pink:r=44100:a=0.0"
             input_files.append(['-f', 'lavfi', '-i', silent_input])
+            # Map the generated silent source to final_audio to keep muxer happy
             filter_parts.append(f"[{current_stream_index}:a]anull[final_audio]")
 
         return filter_parts
@@ -983,8 +1362,23 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
 
         # Build text filter with background support
         text_filter_parts = [
-            f"drawtext=text='{text_content}':fontsize={font_size}:fontcolor={font_color}:x={position_x}:y={position_y}"
+            f"drawtext=text='{text_content}'",
+            f":fontsize={font_size}",
+            f":fontcolor={font_color}",
         ]
+
+        # Add font resolution arguments (fontfile or font family)
+        print("[FONTDBG] prerender style has font?", hasattr(style, "font") if style else "no style",
+              "segment_data.font:", getattr(segment_data, "font", None),
+              "num text_styles:", len(getattr(segment_data, "text_styles", []) or []),
+              "range fonts:", [getattr(r, "font", None) for r in (getattr(segment_data, "text_styles", []) or [])])
+        text_filter_parts.extend(_resolve_font_arguments(style, segment_data))
+
+        # Add positioning
+        text_filter_parts.extend([
+            f":x={position_x}",
+            f":y={position_y}",
+        ])
 
         if background_enabled:
             text_filter_parts.extend([
