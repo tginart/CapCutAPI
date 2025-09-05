@@ -204,6 +204,8 @@ def add_video_track(
             # Use centralized LUT for transition name mapping
             enum_name = TRANSITION_NAME_LUT.get(normalized_transition, normalized_transition)
 
+            print(f"[TRANSITION] Requested='{transition}' normalized='{normalized_transition}' enum_name='{enum_name}' duration={transition_duration}s")
+
             # Get transition type
             if IS_CAPCUT_ENV:
                 transition_type = getattr(draft.CapCut_Transition_type, enum_name)
@@ -211,11 +213,22 @@ def add_video_track(
                 transition_type = getattr(draft.Transition_type, enum_name)
 
             # Set transition duration (convert to microseconds)
-            duration_microseconds = int(transition_duration * 1e6)
+            duration_microseconds = int((transition_duration or 0.0) * 1e6)
 
             # Add transition
             video_segment.add_transition(transition_type, duration=duration_microseconds)
+            # Persist normalized enum name and transition duration (seconds) on the segment for the exporter
+            try:
+                setattr(video_segment, '_cc_transition_enum_name', enum_name)
+                setattr(video_segment, '_cc_transition_duration_sec', float(transition_duration or 0.0))
+                print(
+                    f"[TRANSITION] Applied enum='{enum_name}' duration_sec={float(transition_duration or 0.0):.3f} at target_start={target_start}s"
+                )
+            except Exception:
+                # Non-fatal if attributes cannot be set
+                print("[TRANSITION][WARN] Could not persist transition metadata on segment")
         except AttributeError:
+            print(f"[TRANSITION][WARN] Unsupported transition type: '{transition}' (normalized='{normalized_transition}' -> enum='{enum_name}')")
             raise ValueError(f"Unsupported transition type: {transition} (normalized to '{enum_name}'), transition setting skipped")
     
     # Add mask effect

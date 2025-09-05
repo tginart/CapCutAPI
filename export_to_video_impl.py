@@ -724,23 +724,96 @@ class VideoCompositionEngine:
                             if last_tuple is not None:
                                 prev_loop_index, prev_seg = last_tuple
                                 # Read transition parameters from previous segment (preferred) or current
-                                trans_name = getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
-                                if not trans_name:
-                                    trans_name = getattr(getattr(segment, 'segment_data', None), 'transition', None)
-                                trans_dur = getattr(getattr(prev_seg, 'segment_data', None), 'transition_duration', None)
-                                if trans_dur is None:
-                                    trans_dur = getattr(getattr(segment, 'segment_data', None), 'transition_duration', None)
+                                def _extract_transition_info(obj: object) -> Tuple[Optional[str], Optional[float]]:
+                                    name_candidate: Optional[str] = None
+                                    duration_seconds: Optional[float] = None
+                                    if obj is None:
+                                        return None, None
+                                    # Try common name attributes
+                                    for attr in ('name', 'transition_name'):
+                                        try:
+                                            val = getattr(obj, attr, None)
+                                            if isinstance(val, str) and val.strip():
+                                                name_candidate = val.strip()
+                                                break
+                                        except Exception:
+                                            pass
+                                    # Try type/enum-ish attributes
+                                    if name_candidate is None:
+                                        for attr in ('transition_type', 'type', 'enum', 'effect', 'meta', 'effect_meta'):
+                                            try:
+                                                val = getattr(obj, attr, None)
+                                                if isinstance(val, str) and val.strip():
+                                                    name_candidate = val.strip()
+                                                    break
+                                                # If it's an object with a name/display name
+                                                for sub_attr in ('name', 'transition_name', 'display_name'):
+                                                    try:
+                                                        sub = getattr(val, sub_attr, None)
+                                                        if isinstance(sub, str) and sub.strip():
+                                                            name_candidate = sub.strip()
+                                                            break
+                                                    except Exception:
+                                                        pass
+                                                if name_candidate is not None:
+                                                    break
+                                            except Exception:
+                                                pass
+                                    # Duration: prefer microseconds if present
+                                    for dur_attr in ('duration', 'duration_us', 'duration_microseconds', 'duration_ms'):
+                                        try:
+                                            dval = getattr(obj, dur_attr, None)
+                                            if isinstance(dval, (int, float)):
+                                                # Heuristic: if very large, it is microseconds; if moderate, could be ms
+                                                if dur_attr.endswith(('us', 'microseconds')) or dval > 10000:
+                                                    duration_seconds = float(dval) / 1_000_000.0
+                                                elif dur_attr.endswith('ms'):
+                                                    duration_seconds = float(dval) / 1000.0
+                                                else:
+                                                    duration_seconds = float(dval)
+                                                break
+                                        except Exception:
+                                            pass
+                                    return name_candidate, duration_seconds
+
+                                # Prefer explicit metadata stored by add_video_track
+                                trans_name_str = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_enum_name', None)
+                                trans_dur_sec = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_duration_sec', None)
+                                if not trans_name_str:
+                                    trans_name_str = getattr(getattr(segment, 'segment_data', None), '_cc_transition_enum_name', None)
+                                if trans_dur_sec is None:
+                                    trans_dur_sec = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_duration_sec', None)
+                                if trans_dur_sec is None:
+                                    trans_dur_sec = getattr(getattr(segment, 'segment_data', None), '_cc_transition_duration_sec', None)
+                                # As a last resort, attempt to extract from raw transition object (older behavior)
+                                if not trans_name_str or trans_dur_sec is None:
+                                    prev_trans_obj = getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
+                                    curr_trans_obj = getattr(getattr(segment, 'segment_data', None), 'transition', None)
+                                    name_fallback, dur_fallback = _extract_transition_info(prev_trans_obj)
+                                    if not name_fallback and curr_trans_obj is not None:
+                                        name_fallback, dur_fallback = _extract_transition_info(curr_trans_obj)
+                                    trans_name_str = trans_name_str or name_fallback
+                                    trans_dur_sec = trans_dur_sec if trans_dur_sec is not None else dur_fallback
+                                # Hard rule: only transition_duration controls transition time
+                                # If still None, treat as 0 (no transition)
+                                if trans_dur_sec is None:
+                                    trans_dur_sec = 0.0
 
                                 # Normalize and check using centralized LUT
-                                trans_name_norm = str(trans_name).strip().lower().replace(' ', '_') if isinstance(trans_name, str) else ''
+                                trans_name_norm = str(trans_name_str).strip().lower().replace(' ', '_') if isinstance(trans_name_str, str) else ''
                                 enum_name = TRANSITION_NAME_LUT.get(trans_name_norm, trans_name_norm)
                                 is_pull_in = enum_name == 'Pull_in'
                                 is_pull_out = enum_name == 'Pull_Out'
+                                print(
+                                    f"[XFADE] track='{segment.track_name}' prev_idx={prev_loop_index} curr_idx={i} "
+                                    f"raw='{trans_name_str}' norm='{trans_name_norm}' enum='{enum_name}' "
+                                    f"pull_in={is_pull_in} pull_out={is_pull_out}"
+                                )
 
                                 # Only when clips butt-join to avoid gaps
                                 joins_cleanly = abs(prev_seg.end_time - segment.start_time) < 1e-4
 
-                                if (is_pull_in or is_pull_out) and joins_cleanly and isinstance(trans_dur, (int, float)) and trans_dur > 0:
+                                if (is_pull_in or is_pull_out) and joins_cleanly and isinstance(trans_dur_sec, (int, float)) and trans_dur_sec > 0:
                                     # Clamp overlap to available tails/heads (after speed)
                                     prev_speed_obj = getattr(prev_seg.segment_data, 'speed', None)
                                     prev_speed_factor = getattr(prev_speed_obj, 'speed', 1.0) if prev_speed_obj is not None else 1.0
@@ -753,8 +826,12 @@ class VideoCompositionEngine:
                                         eff_duration_prev = max(0.0, (prev_seg.end_time - prev_seg.start_time) / (prev_speed_factor if prev_speed_factor != 0 else 1.0))
                                         effective_duration_by_loop_index[prev_loop_index] = eff_duration_prev
 
-                                    d = float(trans_dur)
+                                    d = float(trans_dur_sec)
                                     d = max(0.0, min(d, eff_duration_prev, eff_duration_curr))
+                                    print(
+                                        f"[XFADE] Using transition enum='{enum_name}' duration={d:.3f}s (requested={trans_dur_sec}) "
+                                        f"prev_eff={eff_duration_prev:.3f}s curr_eff={eff_duration_curr:.3f}s join_ok={joins_cleanly}"
+                                    )
 
                                     if d > 1e-3:
                                         # Labels
@@ -791,6 +868,9 @@ class VideoCompositionEngine:
                                         # Choose xfade transition type
                                         xfade_type = 'zoomin' if is_pull_in else 'zoomout'
                                         filter_parts.append(f"[{a_canv}][{b_canv}]xfade=transition={xfade_type}:duration={d}:offset=0[{trans_label}]")
+                                        print(
+                                            f"[XFADE] Built xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={d:.3f}s"
+                                        )
 
                                         # Align to global timeline: transition window is [startB - d, startB]
                                         t0 = max(0.0, segment.start_time - d)
@@ -801,7 +881,19 @@ class VideoCompositionEngine:
                                         filter_parts.append(
                                             f"{prev_layer_after_b}[{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
                                         )
+                                        print(
+                                            f"[XFADE] Overlaying transition window [{t0:.3f}, {segment.start_time:.3f}]s on track='{segment.track_name}'"
+                                        )
                                         layer_outputs.append(f"[layer{i+1}_tr]")
+                                    else:
+                                        print(
+                                            f"[XFADE][WARN] Skipping transition enum='{enum_name}': effective duration too small (d={d:.4f}s)"
+                                        )
+                                else:
+                                    print(
+                                        f"[XFADE] Transition not applied: enum='{enum_name}', join_ok={joins_cleanly}, "
+                                        f"trans_dur='{trans_dur_sec}', pull_in={is_pull_in}, pull_out={is_pull_out}"
+                                    )
 
                             # Update last segment for this track after processing this segment
                             last_visual_segment_by_track[segment.track_name] = (i, segment)

@@ -96,6 +96,7 @@ steps:
   - **height** (int, default 1920): Project height in pixels
   - **start** (float, default 0): Source clip start time (seconds)
   - **end** (float|null): Source clip end time; if omitted and `duration` not set, initial duration is 0 and probed on save
+  - **duration** (float|null): Video duration (seconds), if provided, skip duration detection. By default, this is not necessary unless the segment is getting clipped.
   - **target_start** (float, default 0): Where to place on the project timeline (seconds)
   - **draft_id** (string|null): Draft ID; if omitted a new draft is created (or the current one is used)
   - **transform_y** (float, default 0): Vertical position in normalized canvas coordinates
@@ -105,7 +106,6 @@ steps:
   - **speed** (float, default 1.0): Playback speed; target duration is `(end - start) / speed`
   - **track_name** (string, default "main"): Video track name
   - **relative_index** (int, default 0): Layer order among same-type tracks; higher renders above lower
-  - **duration** (float|null): Explicit source duration (seconds); skips duration probing
   - **transition** (string|null): Transition name (must match environment enum)
   - **transition_duration** (float|null, default 0.5): Transition duration in seconds
   - Mask params:
@@ -142,6 +142,7 @@ steps:
   - **draft_folder** (string): Drafts root path used to write asset `replace_path`
   - **start** (float, default 0): Source clip start time (seconds)
   - **end** (float|null): Source clip end time; if omitted and `duration` not set, initial duration is 0 and probed on save
+  - **duration** (float|null): Audio duration (seconds), if provided, skip duration detection. By default, this is not necessary unless the segment is getting clipped.
   - **target_start** (float, default 0): Where to place on the project timeline (seconds)
   - **draft_id** (string|null): Draft ID; if omitted a new draft is created (or the current one is used)
   - **volume** (float, default 1.0): Audio volume multiplier (0.0 mute, 1.0 original)
@@ -150,7 +151,6 @@ steps:
   - **sound_effects** (list of [name, params] tuples): Effect name plus params list; names must match environment enums
   - **width** (int, default 1080): Project width in pixels
   - **height** (int, default 1920): Project height in pixels
-  - **duration** (float|null): Explicit source duration (seconds); skips duration probing
 - Key notes:
   - If neither `end` nor `duration` is provided, true duration is probed on save
   - Effect names must match environment enums; unknown effects are skipped with a warning
