@@ -1949,7 +1949,7 @@ def export_to_video_impl(
     yaml_config: Optional[str] = None,
     draft_id: Optional[str] = None,
     export_config: Optional[VideoExportConfig] = None,
-    use_multipass: bool = True
+    use_multipass: bool = False
 ) -> Dict[str, Any]:
     """
     Export a CapCut draft to video using FFmpeg
@@ -2007,11 +2007,11 @@ def export_to_video_impl(
             if use_multipass:
                 used_multipass = False
                 try:
-                    logger.info("Multipass: building visual tracks…")
+                    print("Multipass: building visual tracks…")
                     track_videos, overlay_order = _build_visual_tracks(engine, temp_dir)
-                    logger.info(f"Multipass: built {len(track_videos)} visual track(s)")
+                    print(f"Multipass: built {len(track_videos)} visual track(s)")
 
-                    logger.info("Multipass: composing final output from tracks…")
+                    print("Multipass: composing final output from tracks…")
                     _compose_final_from_tracks(
                         engine=engine,
                         track_videos=track_videos,
@@ -2022,15 +2022,15 @@ def export_to_video_impl(
                     )
                     used_multipass = True
                 except Exception as mp_err:
-                    logger.warning(f"Multipass pipeline failed; falling back to monolithic ffmpeg. Reason: {mp_err}")
+                    print(f"Warning: Multipass pipeline failed; falling back to monolithic ffmpeg. Reason: {mp_err}")
 
                 if used_multipass:
                     # Success path (multipass)
-                    logger.info(f"Video export completed successfully: {output_path}")
+                    print(f"Video export completed successfully: {output_path}")
                     # Check output file
                     if os.path.exists(output_path):
                         file_size = os.path.getsize(output_path)
-                        logger.info(f"Output file size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
+                        print(f"Output file size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
                     else:
                         raise RuntimeError(f"Output file was not created: {output_path}")
                     return {
@@ -2042,7 +2042,6 @@ def export_to_video_impl(
                         "fps": engine.fps,
                         "file_size": file_size if 'file_size' in locals() else 0
                     }
-
             # Default/backup: monolithic single-command path
                 # Generate FFmpeg filter complex (original one-shot flow)
                 filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
