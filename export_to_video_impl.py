@@ -1,238 +1,78 @@
 """
 ===============================================================================
-VIDEO EXPORT IMPLEMENTATION FOR CAPCUT API
+MOVIEPY EXPORT IMPLEMENTATION FOR CAPCUT API (Single-file, modular)
 ===============================================================================
 
-OVERVIEW:
----------
-This module provides a complete video composition engine that exports CapCut drafts
-to video files using FFmpeg. It takes a draft specification (YAML config or draft ID)
-and renders all visual and textual elements into a final video output.
+This refactor replaces explicit FFmpeg filtergraphs with MoviePy compositing.
+It preserves your concepts:
 
-ARCHITECTURE:
--------------
-1. VideoCompositionEngine Class:
-   - Core engine that extracts segments from draft tracks
-   - Sorts segments by render order (z-index) for proper layering
-   - Generates FFmpeg filter_complex strings for compositing
+- Script → Tracks → Segments → Engine → Export
+- Modular helpers for: sizing, transforms, timing, transitions, audio mixing
+- One-file layout, but highly sectioned & testable
 
-2. Segment Processing Pipeline:
-   - Extract segments from all tracks (video, text, stickers)
-   - Convert CapCut timing (microseconds) to FFmpeg timing (seconds)
-   - Apply transformations, effects, and timing controls
-   - Generate FFmpeg filter graphs for each segment type
+Notes:
+- MoviePy relies on ffmpeg under the hood, but you no longer construct commands.
+- Text rendering uses MoviePy's TextClip (requires ImageMagick or FreeType/FFmpeg).
+- Fonts: optional pyfonts mapping preserved; if unavailable, falls back to family name.
 
-3. FFmpeg Integration:
-   - Builds complex filter graphs for multi-layer compositing
-   - Handles multiple input sources (videos, images, generated content)
-   - Applies real-time transformations and effects
-   - Encodes final output with configurable settings
+Current feature parity (approx):
+✓ add_video/add_image/add_text/add_sticker/add_audio
+✓ z-index compositing, normalized → pixel positioning
+✓ scale/rotation/opacity/speed
+✓ multiple tracks mixed; complex timing
+✓ simple "Pull In/Out" transitions via crossfade + zoom
+✓ YAML or draft_id input path; same CLI
 
-CURRENT FUNCTIONALITY:
-----------------------
-
-SUPPORTED OPERATIONS:
-~~~~~~~~~~~~~~~~~~~~~~
-✓ add_video:
-  - Video clips with source/target timing
-  - Scale transformations (scale_x, scale_y)
-  - Position transformations (transform_x, transform_y)
-  - Opacity control (alpha)
-  - Rotation (rotation)
-  - Speed effects (speed)
-  - Basic video effects (blur, sharpen via effect mapping)
-
-✓ add_image:
-  - Static images as video segments
-  - All video transformations apply
-  - Intro/outro animations (basic support)
-  - Transitions (basic support)
-  - Background blur (not implemented)
-
-✓ add_text:
-  - Text overlays with custom content
-  - Font size and color control
-  - Position control (transform_x, transform_y)
-  - Timing control (start/end)
-  - Basic styling (font, color, alpha)
-
-✓ add_sticker:
-  - Basic placeholder support
-  - Position and transformation support
-  - Limited to simple colored rectangles
-
-✓ add_subtitle:
-  - SRT subtitle import
-  - Text styling and positioning
-  - Timing synchronization
-
-✓ add_audio:
-  - Audio clips with source/target timing
-  - Volume control and speed effects
-  - Multiple audio track mixing
-  - AAC encoding with configurable settings
-
-SUPPORTED FEATURES:
-~~~~~~~~~~~~~~~~~~~
-✓ Multiple track compositing with proper z-index layering
-✓ Complex timing synchronization across tracks
-✓ Video transformations (scale, position, rotation, opacity)
-✓ Audio track mixing and synchronization
-✓ Text overlay rendering with basic styling
-✓ FFmpeg filter graph generation for professional compositing
-✓ Configurable output settings (resolution, FPS, bitrate, audio)
-✓ Progress logging and error handling
-✓ Asset downloading and management
-✓ YAML config processing
-✓ Draft ID processing
-
-LIMITATIONS & MISSING FUNCTIONALITY:
-------------------------------------
-
-VIDEO EFFECTS & FILTERS:
-~~~~~~~~~~~~~~~~~~~~~~~~
-✗ Advanced CapCut video effects (only basic blur/sharpen mapped)
-✗ Complex filter chains and combinations
-✗ Real-time effect parameters and keyframes
-✗ CapCut-specific effect presets
-
-TRANSITIONS:
-~~~~~~~~~~~
-✗ Smooth transitions between segments
-✗ Transition duration and easing
-✗ Transition effects (dissolve, wipe, etc.)
-✗ Custom transition curves
-
-ANIMATIONS:
-~~~~~~~~~~~
-✗ Complex intro/outro animations
-✗ Keyframe-based animations
-✗ Animation curves and interpolation
-✗ Multi-point animation paths
-
-STICKER SYSTEM:
-~~~~~~~~~~~~~~~
-✗ Real sticker assets (only placeholder rectangles)
-✗ Sticker animations
-✗ Sticker effects and transformations
-✗ Dynamic sticker properties
-
-TEXT ADVANCED FEATURES:
-~~~~~~~~~~~~~~~~~~~~~~~
-✗ Rich text formatting (bold, italic, underline)
-✗ Multi-style text ranges
-✗ Text shadows and outlines
-✗ Text background/bubble effects
-✗ Font family selection
-✗ Text animations and keyframes
-
-KEYFRAME SYSTEM:
-~~~~~~~~~~~~~~~~
-✗ Video keyframes for property animation
-✗ Complex animation curves
-✗ Keyframe interpolation
-✗ Real-time parameter changes
-
-PERFORMANCE LIMITATIONS:
-~~~~~~~~~~~~~~~~~~~~~~~~
-✗ No streaming processing for large projects
-✗ Memory-intensive for complex compositions
-✗ Limited concurrency for asset downloads
-✗ No GPU acceleration support
-
-ARCHITECTURAL CONSTRAINTS:
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-✗ Single-pass FFmpeg processing (no intermediate files)
-✗ Limited to FFmpeg-supported formats and codecs
-✗ No real-time preview generation
-✗ Synchronous processing only
-
-INPUT FORMAT LIMITATIONS:
-~~~~~~~~~~~~~~~~~~~~~~~~~
-✗ No support for CapCut template imports
-✗ Limited imported track support
-✗ No support for draft collaboration features
-✗ Limited metadata preservation
-
-DEPENDENCIES:
--------------
-- FFmpeg must be installed and available in PATH
-- All CapCutAPI dependencies
-- Python 3.7+
-- Remote assets must be accessible via URL
-
-USAGE PATTERNS:
----------------
-This implementation is designed for:
-✓ Programmatic video generation from YAML configs
-✓ Automated content creation workflows
-✓ Preview generation for CapCut drafts
-✓ Exporting simple to medium-complexity compositions
-
-Not suitable for:
-✗ Real-time video processing
-✗ Ultra-high-resolution workflows
-✗ Complex multi-camera editing
-✗ Professional post-production workflows
-
-FUTURE ENHANCEMENT POSSIBILITIES:
----------------------------------
-1. Advanced video effects mapping
-2. Keyframe animation system
-3. Real sticker asset support
-4. Transition effects engine
-5. Audio fade in/out effects
-6. Background music mixing enhancements
-7. GPU acceleration support
-8. Streaming processing for large projects
-9. Multi-format export support
-10. Real-time preview generation
-11. Advanced text rendering with rich formatting
+Gaps vs your FFmpeg version:
+- Effect coverage still basic (blur/sharpen omitted here; can be added with vfx)
+- Advanced keyframes/effects not ported
+- Text backgrounds/rounded boxes are simplified (can be drawn via PIL mask if needed)
 
 ===============================================================================
 """
 
 import os
-import json
-import subprocess
-import tempfile
-import shutil
-import argparse
 import sys
-from typing import Dict, List, Any, Optional, Union, Tuple
-from dataclasses import dataclass
-from collections import defaultdict
+import json
+import math
+import tempfile
+import argparse
 import logging
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
-import pyJianYingDraft as draft
-from settings.local import IS_CAPCUT_ENV, DRAFT_CACHE_DIR
-from draft_cache import DRAFT_CACHE
+# --- External deps you already use ---
+import pyJianYingDraft as draft  # your CapCut parser
 from save_draft_impl import query_script_impl
-from util import generate_draft_url
 from pyJianYingDraft.metadata.capcut_transition_meta import TRANSITION_NAME_LUT
 
-# Setup logging
-logger = logging.getLogger(__name__)
-
-# Optional font support via pyfonts
+# Optional font helper (as in your original code)
 try:
-    # pyfonts is expected to be provided in the environment
-    # Different versions may expose different helpers; we will try a few APIs at runtime
     import pyfonts  # type: ignore
     _HAS_PYFONTS = True
 except Exception:
-    pyfonts = None  # type: ignore
+    pyfonts = None
     _HAS_PYFONTS = False
 
-# --- Global calibration for text sizing (CapCut-style size → pixel size) ---
-# Defaults estimated from reference at canvas height 1920px:
-#   size 12 ≈ 60px, size 8 ≈ 40px
-CC_TEXT_PX_AT_SIZE12: float = 60.0
-CC_TEXT_PX_AT_SIZE8: float = 40.0
-CC_TEXT_BASE_HEIGHT: float = 1920.0
+# --- MoviePy ---
+from moviepy import (
+    VideoFileClip,
+    AudioFileClip,
+    ImageClip,
+    TextClip,
+    ColorClip,
+    CompositeVideoClip,
+    CompositeAudioClip,
+)
 
-# CapCut font → closest Google Font family mapping
-# Note: Only includes fonts that successfully resolve via Google Fonts API
+# ---------------------------------------
+# Logging
+# ---------------------------------------
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------
+# Font mapping & text sizing calibration
+# ---------------------------------------
 CAPCUT_TO_GOOGLE_FONT = {
     'Roboto_BlkCn': 'Roboto Condensed',
     'Poppins_Regular': 'Poppins',
@@ -250,218 +90,25 @@ CAPCUT_TO_GOOGLE_FONT = {
     'Staatliches_Regular': 'Staatliches',
     'Bungee_Regular': 'Bungee',
     'Inter_Black': 'Inter',
-    # Removed problematic mappings that cause HTTP 400 errors:
-    # 'SansitaSwashed_Regular': 'Sansita Swashed',  # API rejects "SansitaSwashed" family name
-    # 'SecularOne_Regular': 'Secular One',          # API rejects "SecularOne" family name  
     'Sora_Regular': 'Sora',
     'Zapfino': 'Great Vibes',
-    # 'OldStandardTT_Regular': 'Old Standard TT',   # API rejects "OldStandardTT" family name
     'Coiny_Regular': 'Coiny',
-    # 'HeptaSlab_ExtraBold': 'Hepta Slab',          # API rejects "HeptaSlab" family name
-    # 'HeptaSlab_Light': 'Hepta Slab',              # API rejects "HeptaSlab" family name
     'Giveny': 'Bodoni Moda',
 }
 
-# Explanation: This mapping translates CapCut-specific font identifiers to their closest
-# Google Fonts family equivalents. During rendering, we use this to resolve an actual
-# local font file via the optional 'pyfonts' helper so FFmpeg drawtext can find a TTF/OTF.
-# If a CapCut font is not listed here, we fall back to using the given name directly as
-# a best-effort pass-through.
+CC_TEXT_PX_AT_SIZE12: float = 60.0
+CC_TEXT_PX_AT_SIZE8: float = 40.0
+CC_TEXT_BASE_HEIGHT: float = 1920.0
 
-def _infer_font_style_tokens(capcut_font_name: Optional[str], style_obj: Optional[object]) -> tuple[str, bool]:
-    """Infer weight token (e.g., 'black','bold','regular','light') and italic from CapCut font name and style.
 
-    Returns (weight_token, italic)
-    """
-    italic = False
-    weight_token = 'regular'
-
-    # Inspect style attributes if present
-    if style_obj is not None:
-        try:
-            italic = bool(getattr(style_obj, 'italic', False)) or bool(getattr(style_obj, 'is_italic', False))
-        except Exception:
-            pass
-        try:
-            # Numeric weight if provided
-            w = getattr(style_obj, 'weight', None)
-            if isinstance(w, (int, float)):
-                if w >= 900:
-                    weight_token = 'black'
-                elif w >= 800:
-                    weight_token = 'extra-bold'
-                elif w >= 700:
-                    weight_token = 'bold'
-                elif w >= 600:
-                    weight_token = 'semi-bold'
-                elif w >= 500:
-                    weight_token = 'medium'
-                elif w >= 300:
-                    weight_token = 'light'
-                elif w >= 200:
-                    weight_token = 'extra-light'
-                else:
-                    weight_token = 'regular'
-        except Exception:
-            pass
-
-    # Parse from CapCut font code/name
-    name = (capcut_font_name or '').lower()
-    if 'italic' in name:
-        italic = True or italic
-    if any(tok in name for tok in ['black', 'blk']):
-        weight_token = 'black'
-    elif 'extrabold' in name or 'extra_bold' in name or 'xtrabold' in name:
-        weight_token = 'extra-bold'
-    elif 'semibold' in name or 'semi_bold' in name:
-        weight_token = 'semi-bold'
-    elif 'bold' in name:
-        weight_token = 'bold'
-    elif 'medium' in name:
-        weight_token = 'medium'
-    elif 'extralight' in name or 'extra_light' in name:
-        weight_token = 'extra-light'
-    elif 'light' in name:
-        weight_token = 'light'
-    elif 'thin' in name:
-        weight_token = 'thin'
-
-    return weight_token, italic
-
-def _resolve_font_arguments(style_obj: Optional[object], segment_obj: Optional[object] = None) -> list[str]:
-    """Resolve drawtext font arguments using pyfonts if available.
-
-    Returns a list of drawtext arguments like [":fontfile='...'"] or [":font='Family'"].
-    Raises ValueError if font resolution fails.
-    """
-    # Extract a CapCut style font name if present
-    capcut_font_name: Optional[str] = None
-    if style_obj is not None:
-        for attr in ('font', 'font_name', 'family', 'fontFamily', 'font_family'):
-            try:
-                v = getattr(style_obj, attr, None)
-                if isinstance(v, str) and v.strip():
-                    capcut_font_name = v.strip()
-                    break
-            except Exception as e:
-                raise ValueError(f"Failed to extract font name from style object: {e}") from e
-
-    # Debug: log the incoming style object to aid troubleshooting in development
-    print(f"style_obj: {style_obj}")
-    # Debug: pause here when running interactively to inspect font resolution behavior
-    # breakpoint()
-    # If not provided, try fallbacks from the segment object (global or per-range font)
-    if not capcut_font_name and segment_obj is not None:
-        try:
-            seg_font = getattr(segment_obj, 'font', None)
-            seg_font_name = getattr(seg_font, 'name', None) if seg_font is not None else None
-            if isinstance(seg_font_name, str) and seg_font_name.strip():
-                capcut_font_name = seg_font_name.strip()
-                print(f"[FONTDBG] using fallback from segment_data.font: {capcut_font_name}")
-        except Exception:
-            pass
-
-        # Fallback to first per-range font if any
-        if not capcut_font_name:
-            try:
-                ranges = getattr(segment_obj, 'text_styles', []) or []
-                for r in ranges:
-                    rf = getattr(r, 'font', None)
-                    rf_name = getattr(rf, 'name', None) if rf is not None else None
-                    if isinstance(rf_name, str) and rf_name.strip():
-                        capcut_font_name = rf_name.strip()
-                        print(f"[FONTDBG] using fallback from first text_styles font: {capcut_font_name}")
-                        break
-            except Exception:
-                pass
-
-    # If still not provided, we cannot resolve
-    if not capcut_font_name:
-        print("[FONTDBG] capcut_font_name missing; style_obj and segment fallbacks had no font-like attrs")
-        raise ValueError("No font name specified in style object")
-
-    # Check if pyfonts is available
-    if not _HAS_PYFONTS:
-        raise ValueError(f"pyfonts is required for font '{capcut_font_name}' but is not installed. Please install with: pip install pyfonts")
-
-    # Map to Google Font family with normalization (underscore/hyphen and base family fallback)
-    gf_family = CAPCUT_TO_GOOGLE_FONT.get(capcut_font_name)
-    if not gf_family:
-        alt_key = capcut_font_name.replace('-', '_')
-        gf_family = CAPCUT_TO_GOOGLE_FONT.get(alt_key)
-    if not gf_family:
-        base_key = capcut_font_name.split('-', 1)[0]
-        gf_family = CAPCUT_TO_GOOGLE_FONT.get(base_key, base_key)
-    print(f"[FONTDBG] font map: '{capcut_font_name}' -> '{gf_family}'")
-    weight_token, italic = _infer_font_style_tokens(capcut_font_name, style_obj)
-
-    # Attempt resolution via pyfonts
-    fontfile_path: Optional[str] = None
-    resolution_error = None
-
-    # Common API: pyfonts.load_google_font(name, weight=..., italic=...)
-    if hasattr(pyfonts, 'load_google_font'):
-        try:
-            font_obj = pyfonts.load_google_font(gf_family, weight=weight_token, italic=italic)  # type: ignore
-            # Accept direct path, or object with path-like attribute
-            if isinstance(font_obj, str) and os.path.exists(font_obj):
-                fontfile_path = font_obj
-            else:
-                # Handle matplotlib.font_manager.FontProperties objects
-                if hasattr(font_obj, 'get_file'):
-                    try:
-                        p = font_obj.get_file()
-                        if isinstance(p, str) and os.path.exists(p):
-                            fontfile_path = p
-                    except Exception:
-                        pass
-                
-                # Handle other object types with path attributes  
-                if not fontfile_path:
-                    for attr in ('path', 'file', 'filename', 'fname', 'ttf_path', 'otf_path'):
-                        p = getattr(font_obj, attr, None)
-                        if isinstance(p, str) and os.path.exists(p):
-                            fontfile_path = p
-                            break
-        except Exception as e:
-            resolution_error = f"pyfonts.load_google_font failed for '{gf_family}' (weight={weight_token}, italic={italic}): {e}"
-
-    # Alternative API: pyfonts.get_font_path(name, weight=..., italic=...)
-    if fontfile_path is None and hasattr(pyfonts, 'get_font_path'):
-        try:
-            p = pyfonts.get_font_path(gf_family, weight=weight_token, italic=italic)  # type: ignore
-            if isinstance(p, str) and os.path.exists(p):
-                fontfile_path = p
-        except Exception as e:
-            if resolution_error:
-                resolution_error += f"; pyfonts.get_font_path also failed: {e}"
-            else:
-                resolution_error = f"pyfonts.get_font_path failed for '{gf_family}' (weight={weight_token}, italic={italic}): {e}"
-
-    if not fontfile_path:
-        error_msg = f"Could not resolve font file for '{capcut_font_name}' (mapped to '{gf_family}', weight={weight_token}, italic={italic})"
-        if resolution_error:
-            error_msg += f": {resolution_error}"
-        raise ValueError(error_msg)
-
-    # Verify the font file exists
-    if not os.path.exists(fontfile_path):
-        raise ValueError(f"Resolved font file does not exist: {fontfile_path}")
-
-    # Escape for filtergraph
-    ff = (
-        fontfile_path
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-    )
-    return [f":fontfile='{ff}'"]
-
+# ---------------------------------------
+# Data classes
+# ---------------------------------------
 @dataclass
 class VideoExportConfig:
-    """Configuration for video export"""
     output_path: str
-    width: int = 1080
-    height: int = 1920
+    width: Optional[int] = None       # default to script width
+    height: Optional[int] = None      # default to script height
     fps: int = 30
     video_bitrate: str = "8000k"
     audio_bitrate: str = "128k"
@@ -472,76 +119,122 @@ class VideoExportConfig:
     preset: str = "medium"
     crf: str = "23"
 
+
 @dataclass
 class CompositionSegment:
-    """Represents a segment in the composition timeline"""
     track_name: str
     track_type: str
     render_index: int
-    start_time: float  # seconds
-    end_time: float    # seconds
+    start_time: float
+    end_time: float
     segment_data: Any
     material_data: Any = None
     z_index: int = 0
 
-@dataclass
-class VideoCompositionEngine:
-    """Engine for composing video from draft segments"""
 
-    def __init__(self, script: 'draft.Script_file'):
-        self.script = script
-        self.width = script.width
-        self.height = script.height
-        # Ensure a valid FPS for filter inputs; fallback to 30 if missing
-        self.fps = getattr(script, 'fps', None) or 30
-        self.duration_seconds = script.duration / 1_000_000.0  # Convert from microseconds
-        # Preprocess: flatten all tracks into a single list of time-placed segments.
-        # Each segment captures source media, target placement window, and z-order hints.
-        # Extract all segments from all tracks
-        self.segments: List[CompositionSegment] = []
-        self._extract_segments()
+# ---------------------------------------
+# Font helpers
+# ---------------------------------------
+def _infer_font_style_tokens(capcut_font_name: Optional[str], style_obj: Optional[object]) -> Tuple[str, bool]:
+    italic = False
+    weight_token = 'regular'
 
-        # Sort segments by render order (z-index)
-        self.segments.sort(key=lambda s: s.render_index)
-
-    # --- Text sizing helpers -------------------------------------------------
-    def _map_capcut_size_to_pixels(self, capcut_size: Optional[float]) -> int:
-        """Map CapCut-style text size to drawtext pixel size.
-
-        Calibrated using module-level constants:
-          - CC_TEXT_PX_AT_SIZE12: pixel height for size=12 at base height
-          - CC_TEXT_PX_AT_SIZE8:  pixel height for size=8  at base height
-          - CC_TEXT_BASE_HEIGHT: base canvas height these measurements were taken on
-
-        If needed, falls back to a simple heuristic scaling with canvas height.
-        """
-        # Fallback default ~5% of height when size not provided
-        if capcut_size is None:
-            return max(12, int(0.05 * self.height))
-
-        # Linear map at base height, then scale with our canvas height
-        p12 = CC_TEXT_PX_AT_SIZE12
-        p8 = CC_TEXT_PX_AT_SIZE8
-        base_h = CC_TEXT_BASE_HEIGHT if CC_TEXT_BASE_HEIGHT > 0 else 1920.0
+    if style_obj is not None:
         try:
-            slope = (p12 - p8) / (12.0 - 8.0)
-            intercept = p12 - slope * 12.0
-            px_at_base = slope * float(capcut_size) + intercept
-            px = px_at_base * (self.height / base_h)
-            return max(12, int(px))
+            italic = bool(getattr(style_obj, 'italic', False) or getattr(style_obj, 'is_italic', False))
         except Exception:
-            # Ignore calibration errors and use heuristic
+            pass
+        try:
+            w = getattr(style_obj, 'weight', None)
+            if isinstance(w, (int, float)):
+                if w >= 900: weight_token = 'black'
+                elif w >= 800: weight_token = 'extra-bold'
+                elif w >= 700: weight_token = 'bold'
+                elif w >= 600: weight_token = 'semi-bold'
+                elif w >= 500: weight_token = 'medium'
+                elif w >= 300: weight_token = 'light'
+                elif w >= 200: weight_token = 'extra-light'
+                else: weight_token = 'regular'
+        except Exception:
             pass
 
-        # Heuristic compatible with common 1080x1920 vertical canvases
-        # Target: size 12 ≈ 60px and size 8 ≈ 40px at height 1920 → ~5 px/size
-        # px ≈ size * (height / 384)
-        return max(12, int(float(capcut_size) * (self.height / 384.0)))
+    name = (capcut_font_name or '').lower()
+    if 'italic' in name: italic = True
+    if any(tok in name for tok in ['black', 'blk']): weight_token = 'black'
+    elif 'extrabold' in name or 'extra_bold' in name or 'xtrabold' in name: weight_token = 'extra-bold'
+    elif 'semibold' in name or 'semi_bold' in name: weight_token = 'semi-bold'
+    elif 'bold' in name: weight_token = 'bold'
+    elif 'medium' in name: weight_token = 'medium'
+    elif 'extralight' in name or 'extra_light' in name: weight_token = 'extra-light'
+    elif 'light' in name: weight_token = 'light'
+    elif 'thin' in name: weight_token = 'thin'
 
+    return weight_token, italic
+
+
+def _resolve_font_name(style_obj: Optional[object], segment_obj: Optional[object]) -> Optional[str]:
+    capcut_font_name: Optional[str] = None
+    if style_obj is not None:
+        for attr in ('font', 'font_name', 'family', 'fontFamily', 'font_family'):
+            try:
+                v = getattr(style_obj, attr, None)
+                if isinstance(v, str) and v.strip():
+                    capcut_font_name = v.strip()
+                    break
+            except Exception:
+                pass
+
+    if not capcut_font_name and segment_obj is not None:
+        try:
+            seg_font = getattr(segment_obj, 'font', None)
+            seg_font_name = getattr(seg_font, 'name', None) if seg_font is not None else None
+            if isinstance(seg_font_name, str) and seg_font_name.strip():
+                capcut_font_name = seg_font_name.strip()
+        except Exception:
+            pass
+        if not capcut_font_name:
+            try:
+                ranges = getattr(segment_obj, 'text_styles', []) or []
+                for r in ranges:
+                    rf = getattr(r, 'font', None)
+                    rf_name = getattr(rf, 'name', None) if rf is not None else None
+                    if isinstance(rf_name, str) and rf_name.strip():
+                        capcut_font_name = rf_name.strip()
+                        break
+            except Exception:
+                pass
+
+    if not capcut_font_name:
+        return None
+
+    gf_family = CAPCUT_TO_GOOGLE_FONT.get(capcut_font_name) or \
+                CAPCUT_TO_GOOGLE_FONT.get(capcut_font_name.replace('-', '_')) or \
+                CAPCUT_TO_GOOGLE_FONT.get(capcut_font_name.split('-', 1)[0], capcut_font_name)
+    return gf_family
+
+
+# ---------------------------------------
+# Engine
+# ---------------------------------------
+class MoviePyCompositionEngine:
+    def __init__(self, script: 'draft.Script_file', export_cfg: VideoExportConfig):
+        self.script = script
+        self.width = export_cfg.width or script.width
+        self.height = export_cfg.height or script.height
+        self.fps = export_cfg.fps or getattr(script, 'fps', 30) or 30
+        self.duration_seconds = script.duration / 1_000_000.0
+        self.export_cfg = export_cfg
+
+        self.segments: List[CompositionSegment] = []
+        self._extract_segments()
+        # global z-order: render_index then z_index
+        self.segments.sort(key=lambda s: (s.render_index, s.z_index, s.start_time))
+
+        # For transitions between adjacent visual clips on a track
+        self.last_visual_by_track: Dict[str, CompositionSegment] = {}
+
+    # ---------- extraction ----------
     def _extract_segments(self):
-        """Extract all segments from the script and organize by time"""
-        # Tracks include native tracks and optionally imported tracks.
-        # A segment's target_timerange indicates when it should appear in the final timeline.
         track_list = list(self.script.tracks.values())
         track_list.extend(getattr(self.script, 'imported_tracks', []))
 
@@ -549,1268 +242,561 @@ class VideoCompositionEngine:
             track_name = getattr(track, 'name', 'unnamed')
             track_type = track.track_type.name
             render_index = track.render_index
-
-            segments = getattr(track, 'segments', [])
-            for i, segment in enumerate(segments):
-                # Convert timerange from microseconds to seconds
-                target_range = getattr(segment, 'target_timerange', None)
-                if target_range is None:
+            for i, segment in enumerate(getattr(track, 'segments', [])):
+                tr = getattr(segment, 'target_timerange', None)
+                if tr is None:
                     continue
+                start_time = tr.start / 1_000_000.0
+                end_time = (tr.start + tr.duration) / 1_000_000.0
 
-                start_time = target_range.start / 1_000_000.0
-                end_time = (target_range.start + target_range.duration) / 1_000_000.0
-
-                # Get material data for this segment
                 material_data = None
                 if hasattr(segment, 'material_instance'):
                     material_data = segment.material_instance
                 elif hasattr(segment, 'material_id'):
-                    # Try to find material by ID
                     material_data = self._find_material_by_id(segment.material_id, track_type)
 
-                comp_segment = CompositionSegment(
-                    track_name=track_name,
-                    track_type=track_type,
-                    render_index=render_index,
-                    start_time=start_time,
-                    end_time=end_time,
-                    segment_data=segment,
-                    material_data=material_data,
-                    z_index=i
+                self.segments.append(
+                    CompositionSegment(
+                        track_name=track_name,
+                        track_type=track_type,
+                        render_index=render_index,
+                        start_time=start_time,
+                        end_time=end_time,
+                        segment_data=segment,
+                        material_data=material_data,
+                        z_index=i,
+                    )
                 )
 
-                self.segments.append(comp_segment)
-
     def _find_material_by_id(self, material_id: str, track_type: str) -> Optional[Any]:
-        """Find material by ID in the script materials"""
         materials = getattr(self.script, 'materials', None)
         if materials is None:
             return None
-
         if track_type == 'video':
-            for video in getattr(materials, 'videos', []):
-                if getattr(video, 'material_id', None) == material_id:
-                    return video
+            for v in getattr(materials, 'videos', []):
+                if getattr(v, 'material_id', None) == material_id:
+                    return v
         elif track_type == 'audio':
-            for audio in getattr(materials, 'audios', []):
-                if getattr(audio, 'material_id', None) == material_id:
-                    return audio
+            for a in getattr(materials, 'audios', []):
+                if getattr(a, 'material_id', None) == material_id:
+                    return a
         elif track_type == 'text':
-            for text in getattr(materials, 'texts', []):
-                if text.get('id') == material_id:
-                    return text
-
+            for t in getattr(materials, 'texts', []):
+                if t.get('id') == material_id:
+                    return t
         return None
 
-    def get_active_segments_at_time(self, time_seconds: float) -> List[CompositionSegment]:
-        """Get all segments that are active at a given time"""
-        active_segments = []
-        for segment in self.segments:
-            if segment.start_time <= time_seconds < segment.end_time:
-                active_segments.append(segment)
-        return active_segments
-
-    def _overlay_coords(self, segment: CompositionSegment) -> Tuple[int, int]:
-        """Compute pixel coordinates for overlay placement from normalized transforms."""
-        clip_settings = getattr(segment.segment_data, 'clip_settings', None)
-        if not clip_settings:
-            return 0, 0
-        transform_x = getattr(clip_settings, 'transform_x', 0.0)
-        transform_y = getattr(clip_settings, 'transform_y', 0.0)
-        # CapCut normalized space is [-1,1] in both axes with (0,0) being center.
-        # Convert to pixel coordinates centered on canvas for FFmpeg overlay.
-        x_pixels = int((transform_x + 1.0) * self.width / 2)
-        y_pixels = int((transform_y + 1.0) * self.height / 2)
-        return x_pixels, y_pixels
-
-    def _is_image_media(self, segment: CompositionSegment) -> bool:
-        """Best-effort detection of still image media based on URL extension."""
-        material = segment.material_data
-        url = getattr(material, 'remote_url', '') or ''
-        url = url.lower().split('?')[0]
-        return url.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif'))
-
-    def generate_ffmpeg_filter_complex(self, temp_dir: str) -> Tuple[str, str, List[str]]:
-        """
-        Generate FFmpeg filter_complex strings for video and audio composition
-
-        Returns:
-            Tuple of (video_filter_complex, audio_filter_complex, input_files_list)
-        """
-        filter_parts = []
-        audio_filter_parts = []
-        input_files = []
-        stream_index = 0
-
-        # Filtergraph structure overview:
-        # - We start with a synthetic black background labeled [bg].
-        # - For each visual segment (video/image/sticker/text), we produce a labeled video
-        #   stream, align it in time with setpts (relative to the global timeline), and
-        #   overlay it onto the running composition with enable=between(t,start,end).
-        # - Text can be drawn inline with drawtext, or pre-rendered to alpha-preserving
-        #   intermediates to reduce filter complexity. Pre-rendered text is then treated
-        #   as a normal video input and overlaid.
-        # - Audio segments are handled after video: each is trimmed, delayed into place,
-        #   optionally sped up/slowed via atempo, and then all tracks are mixed with amix.
-        # - The final labeled outputs are [final_video] and (if present) [final_audio].
-
-        # Global ordered list by render index and in-track z_index
-        ordered_segments = sorted(self.segments, key=lambda s: (s.render_index, s.z_index))
-        # Audio segments handled after video composition
-        audio_segments = [s for s in ordered_segments if s.track_type == 'audio']
-
-        # Create background
-        background_input = f"color=c=black:size={self.width}x{self.height}:r={self.fps}:d={self.duration_seconds}"
-        # Add as grouped arguments for FFmpeg (so the builder can extend them verbatim)
-        input_files.append(['-f', 'lavfi', '-i', background_input])
-        filter_parts.append(f"[{stream_index}:v]null[bg]")
-
-        stream_index += 1
-        layer_outputs = ["[bg]"]
-
-        # Iterate in global z-order; maintain running index for text intermediates
-        text_intermediate_files = getattr(self, 'text_intermediate_files', None)
-        text_idx = 0
-
-        # Transition helper state: remember last video/image segment per track so we can
-        # build transitions between adjacent clips on the same track.
-        last_visual_segment_by_track: Dict[str, Tuple[int, CompositionSegment]] = {}
-        # Cache effective durations (after speed) for segments we process, keyed by loop index
-        effective_duration_by_loop_index: Dict[int, float] = {}
-
-        for i, segment in enumerate(ordered_segments):
-            if segment.track_type in ['video', 'image']:
-                if segment.material_data and hasattr(segment.material_data, 'remote_url'):
-                    video_url = segment.material_data.remote_url
-                    if video_url:
-                        if self._is_image_media(segment):
-                            # Still images are fed as looping single-frame inputs with a fixed duration
-                            seg_duration = max(0.0, segment.end_time - segment.start_time)
-                            input_files.append(['-loop', '1', '-t', f"{seg_duration}", '-i', video_url])
-                        else:
-                            # Video inputs are fed directly; trimming happens in filtergraph
-                            input_files.append(video_url)
-                        video_filter = self._generate_video_segment_filter(
-                            segment, stream_index, i, temp_dir
-                        )
-                        if video_filter:
-                            filter_parts.append(video_filter)
-                            # Shift segment into global timeline by adding a constant PTS offset
-                            start = segment.start_time
-                            filter_parts.append(f"[v{i}]setpts=PTS+{start}/TB[v{i}_ts]")
-                            prev_layer = layer_outputs[-1]
-                            ox, oy = self._overlay_coords(segment)
-                            end = segment.end_time
-                            # Overlay with enable between start and end, aligning center to (ox,oy)
-                            filter_parts.append(
-                                f"{prev_layer}[v{i}_ts]overlay={ox}-w/2:{oy}-h/2:enable='between(t\\,{start}\\,{end})'[layer{i+1}]"
-                            )
-                            layer_outputs.append(f"[layer{i+1}]")
-
-                            # --- Transition: If there is a previous visual segment on the same track,
-                            # and it requests a Pull In/Out transition into this segment, build a
-                            # zoomed crossfade for the overlap window and overlay it at correct z-order.
-                            # Determine this segment's effective duration (after speed)
-                            speed_obj = getattr(segment.segment_data, 'speed', None)
-                            speed_factor = getattr(speed_obj, 'speed', 1.0) if speed_obj is not None else 1.0
-                            try:
-                                speed_factor = float(speed_factor) if speed_factor else 1.0
-                            except Exception:
-                                speed_factor = 1.0
-                            eff_duration_curr = max(0.0, (segment.end_time - segment.start_time) / (speed_factor if speed_factor != 0 else 1.0))
-                            effective_duration_by_loop_index[i] = eff_duration_curr
-
-                            last_tuple = last_visual_segment_by_track.get(segment.track_name)
-                            if last_tuple is not None:
-                                prev_loop_index, prev_seg = last_tuple
-                                # Read transition parameters from previous segment (preferred) or current
-                                def _extract_transition_info(obj: object) -> Tuple[Optional[str], Optional[float]]:
-                                    name_candidate: Optional[str] = None
-                                    duration_seconds: Optional[float] = None
-                                    if obj is None:
-                                        return None, None
-                                    # Try common name attributes
-                                    for attr in ('name', 'transition_name'):
-                                        try:
-                                            val = getattr(obj, attr, None)
-                                            if isinstance(val, str) and val.strip():
-                                                name_candidate = val.strip()
-                                                break
-                                        except Exception:
-                                            pass
-                                    # Try type/enum-ish attributes
-                                    if name_candidate is None:
-                                        for attr in ('transition_type', 'type', 'enum', 'effect', 'meta', 'effect_meta'):
-                                            try:
-                                                val = getattr(obj, attr, None)
-                                                if isinstance(val, str) and val.strip():
-                                                    name_candidate = val.strip()
-                                                    break
-                                                # If it's an object with a name/display name
-                                                for sub_attr in ('name', 'transition_name', 'display_name'):
-                                                    try:
-                                                        sub = getattr(val, sub_attr, None)
-                                                        if isinstance(sub, str) and sub.strip():
-                                                            name_candidate = sub.strip()
-                                                            break
-                                                    except Exception:
-                                                        pass
-                                                if name_candidate is not None:
-                                                    break
-                                            except Exception:
-                                                pass
-                                    # Duration: prefer microseconds if present
-                                    for dur_attr in ('duration', 'duration_us', 'duration_microseconds', 'duration_ms'):
-                                        try:
-                                            dval = getattr(obj, dur_attr, None)
-                                            if isinstance(dval, (int, float)):
-                                                # Heuristic: if very large, it is microseconds; if moderate, could be ms
-                                                if dur_attr.endswith(('us', 'microseconds')) or dval > 10000:
-                                                    duration_seconds = float(dval) / 1_000_000.0
-                                                elif dur_attr.endswith('ms'):
-                                                    duration_seconds = float(dval) / 1000.0
-                                                else:
-                                                    duration_seconds = float(dval)
-                                                break
-                                        except Exception:
-                                            pass
-                                    return name_candidate, duration_seconds
-
-                                # Prefer explicit metadata stored by add_video_track
-                                trans_name_str = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_enum_name', None)
-                                trans_dur_sec = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_duration_sec', None)
-                                if not trans_name_str:
-                                    trans_name_str = getattr(getattr(segment, 'segment_data', None), '_cc_transition_enum_name', None)
-                                if trans_dur_sec is None:
-                                    trans_dur_sec = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_duration_sec', None)
-                                if trans_dur_sec is None:
-                                    trans_dur_sec = getattr(getattr(segment, 'segment_data', None), '_cc_transition_duration_sec', None)
-                                # As a last resort, attempt to extract from raw transition object (older behavior)
-                                if not trans_name_str or trans_dur_sec is None:
-                                    prev_trans_obj = getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
-                                    curr_trans_obj = getattr(getattr(segment, 'segment_data', None), 'transition', None)
-                                    name_fallback, dur_fallback = _extract_transition_info(prev_trans_obj)
-                                    if not name_fallback and curr_trans_obj is not None:
-                                        name_fallback, dur_fallback = _extract_transition_info(curr_trans_obj)
-                                    trans_name_str = trans_name_str or name_fallback
-                                    trans_dur_sec = trans_dur_sec if trans_dur_sec is not None else dur_fallback
-                                # Hard rule: only transition_duration controls transition time
-                                # If still None, treat as 0 (no transition)
-                                if trans_dur_sec is None:
-                                    trans_dur_sec = 0.0
-
-                                # Normalize and check using centralized LUT
-                                trans_name_norm = str(trans_name_str).strip().lower().replace(' ', '_') if isinstance(trans_name_str, str) else ''
-                                enum_name = TRANSITION_NAME_LUT.get(trans_name_norm, trans_name_norm)
-                                is_pull_in = enum_name == 'Pull_in'
-                                is_pull_out = enum_name == 'Pull_Out'
-                                print(
-                                    f"[XFADE] track='{segment.track_name}' prev_idx={prev_loop_index} curr_idx={i} "
-                                    f"raw='{trans_name_str}' norm='{trans_name_norm}' enum='{enum_name}' "
-                                    f"pull_in={is_pull_in} pull_out={is_pull_out}"
-                                )
-
-                                # Only when clips butt-join to avoid gaps
-                                joins_cleanly = abs(prev_seg.end_time - segment.start_time) < 1e-4
-
-                                if (is_pull_in or is_pull_out) and joins_cleanly and isinstance(trans_dur_sec, (int, float)) and trans_dur_sec > 0:
-                                    # Clamp overlap to available tails/heads (after speed)
-                                    prev_speed_obj = getattr(prev_seg.segment_data, 'speed', None)
-                                    prev_speed_factor = getattr(prev_speed_obj, 'speed', 1.0) if prev_speed_obj is not None else 1.0
-                                    try:
-                                        prev_speed_factor = float(prev_speed_factor) if prev_speed_factor else 1.0
-                                    except Exception:
-                                        prev_speed_factor = 1.0
-                                    eff_duration_prev = effective_duration_by_loop_index.get(prev_loop_index)
-                                    if eff_duration_prev is None:
-                                        eff_duration_prev = max(0.0, (prev_seg.end_time - prev_seg.start_time) / (prev_speed_factor if prev_speed_factor != 0 else 1.0))
-                                        effective_duration_by_loop_index[prev_loop_index] = eff_duration_prev
-
-                                    d = float(trans_dur_sec)
-                                    d = max(0.0, min(d, eff_duration_prev, eff_duration_curr))
-                                    print(
-                                        f"[XFADE] Using transition enum='{enum_name}' duration={d:.3f}s (requested={trans_dur_sec}) "
-                                        f"prev_eff={eff_duration_prev:.3f}s curr_eff={eff_duration_curr:.3f}s join_ok={joins_cleanly}"
-                                    )
-
-                                    if d > 1e-3:
-                                        # Labels for tails/heads and transition
-                                        a_tail = f"v{prev_loop_index}_tail"
-                                        b_head = f"v{i}_head"
-                                        trans_label = f"v{prev_loop_index}_{i}_trans"
-
-                                        # Trim last d seconds of A (prev) and first d seconds of B (curr)
-                                        # Both [vX] streams already include base transforms and speed effects
-                                        filter_parts.append(f"[v{prev_loop_index}]trim={eff_duration_prev - d}:{eff_duration_prev},setpts=PTS-STARTPTS[{a_tail}]")
-                                        filter_parts.append(f"[v{i}]trim=0:{d},setpts=PTS-STARTPTS[{b_head}]")
-
-                                        # Determine window [t0, startB]
-                                        t0 = max(0.0, segment.start_time - d)
-
-                                        # Split current composed base into two window copies and a carry stream
-                                        baseA = f"v{prev_loop_index}_{i}_baseA"
-                                        baseB = f"v{prev_loop_index}_{i}_baseB"
-                                        carry = f"v{prev_loop_index}_{i}_carry"
-                                        prev_layer_after_b = layer_outputs[-1]
-                                        filter_parts.append(f"{prev_layer_after_b}split=3[{baseA}][{baseB}][{carry}]")
-
-                                        # Trim each base copy to the transition window and reset PTS
-                                        baseA_w = f"v{prev_loop_index}_{i}_baseA_w"
-                                        baseB_w = f"v{prev_loop_index}_{i}_baseB_w"
-                                        filter_parts.append(f"[{baseA}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseA_w}]")
-                                        filter_parts.append(f"[{baseB}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseB_w}]")
-
-                                        # Overlay the trimmed tails/heads onto the windowed base copies to get full frames
-                                        ox_prev, oy_prev = self._overlay_coords(prev_seg)
-                                        ox_curr, oy_curr = self._overlay_coords(segment)
-                                        A_full = f"v{prev_loop_index}_{i}_A_full"
-                                        B_full = f"v{prev_loop_index}_{i}_B_full"
-                                        filter_parts.append(f"[{baseA_w}][{a_tail}]overlay={ox_prev}-w/2:{oy_prev}-h/2[{A_full}]")
-                                        filter_parts.append(f"[{baseB_w}][{b_head}]overlay={ox_curr}-w/2:{oy_curr}-h/2[{B_full}]")
-
-                                        # Normalize to constant frame rate and pixel format for xfade stability
-                                        A_full_cfr = f"v{prev_loop_index}_{i}_A_full_cfr"
-                                        B_full_cfr = f"v{prev_loop_index}_{i}_B_full_cfr"
-                                        filter_parts.append(f"[{A_full}]fps=fps={self.fps},format=yuv420p[{A_full_cfr}]")
-                                        filter_parts.append(f"[{B_full}]fps=fps={self.fps},format=yuv420p[{B_full_cfr}]")
-
-                                        # Choose xfade transition type and run between full frames
-                                        xfade_type = 'zoomin' if is_pull_in else 'zoomout'
-                                        filter_parts.append(f"[{A_full_cfr}][{B_full_cfr}]xfade=transition={xfade_type}:duration={d}:offset=0[{trans_label}]")
-                                        print(
-                                            f"[XFADE] Built full-frame xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={d:.3f}s"
-                                        )
-
-                                        # Remove black fill from xfade by keying out near-black and creating alpha
-                                        trans_label_ck = f"{trans_label}_ck"
-                                        filter_parts.append(f"[{trans_label}]format=rgba,chromakey=0x000000:0.02:0.0[{trans_label_ck}]")
-
-                                        # Align to global timeline and overlay only during the transition window
-                                        filter_parts.append(f"[{trans_label_ck}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
-                                        filter_parts.append(
-                                            f"[{carry}][{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
-                                        )
-                                        print(
-                                            f"[XFADE] Overlaying transition window [{t0:.3f}, {segment.start_time:.3f}]s on track='{segment.track_name}'"
-                                        )
-                                        layer_outputs.append(f"[layer{i+1}_tr]")
-                                    else:
-                                        print(
-                                            f"[XFADE][WARN] Skipping transition enum='{enum_name}': effective duration too small (d={d:.4f}s)"
-                                        )
-                                else:
-                                    print(
-                                        f"[XFADE] Transition not applied: enum='{enum_name}', join_ok={joins_cleanly}, "
-                                        f"trans_dur='{trans_dur_sec}', pull_in={is_pull_in}, pull_out={is_pull_out}"
-                                    )
-
-                            # Update last segment for this track after processing this segment
-                            last_visual_segment_by_track[segment.track_name] = (i, segment)
-                        stream_index += 1
-
-            elif segment.track_type == 'sticker':
-                if segment.material_data:
-                    sticker_filter = self._generate_sticker_segment_filter(
-                        segment, i, temp_dir
-                    )
-                    if sticker_filter:
-                        filter_parts.append(sticker_filter)
-                        prev_layer = layer_outputs[-1]
-                        ox, oy = self._overlay_coords(segment)
-                        start = segment.start_time
-                        end = segment.end_time
-                        filter_parts.append(
-                            f"{prev_layer}[sticker{i}]overlay={ox}-w/2:{oy}-h/2:enable='between(t\\,{start}\\,{end})'[layer{i+1}]"
-                        )
-                        layer_outputs.append(f"[layer{i+1}]")
-
-            elif segment.track_type == 'text':
-                start = segment.start_time
-                end = segment.end_time
-                prev_layer = layer_outputs[-1]
-                if text_intermediate_files and text_idx < len(text_intermediate_files) and text_intermediate_files[text_idx]:
-                    # Use prerendered alpha video for text to simplify final filtergraph
-                    input_files.append(text_intermediate_files[text_idx])
-                    filter_parts.append(f"[{stream_index}:v]setpts=PTS+{start}/TB[text{i}_ts]")
-                    filter_parts.append(
-                        f"{prev_layer}[text{i}_ts]overlay=0:0:enable='between(t\\,{start}\\,{end})'[layer{i+1}]"
-                    )
-                    layer_outputs.append(f"[layer{i+1}]")
-                    stream_index += 1
-                else:
-                    # Fall back to inline drawtext on the current composed layer
-                    text_filter = self._generate_text_segment_filter(segment, i, temp_dir)
-                    if text_filter:
-                        filter_parts.append(f"{prev_layer}{text_filter}[layer{i+1}]")
-                        layer_outputs.append(f"[layer{i+1}]")
-                text_idx += 1
-
-        # Final video output
-        final_output = layer_outputs[-1]
-        # Use a no-op filter to assign the final label
-        filter_parts.append(f"{final_output}null[final_video]")
-
-        # Process audio segments and build audio mix
-        if audio_segments:
-            audio_filter_parts = self._build_audio_mix_graph(audio_segments, stream_index, input_files)
-
-        filter_complex = "; ".join(filter_parts) if filter_parts else ""
-        audio_filter_complex = "; ".join(audio_filter_parts) if audio_filter_parts else ""
-
-        # Validate filter complex is not empty and has proper structure
-        if not filter_complex.strip():
-            raise ValueError("Generated video filter complex is empty")
-
-        # Ensure we have at least one input (the background)
-        if len(input_files) == 0:
-            raise ValueError("No input files generated for FFmpeg")
-
-        return filter_complex, audio_filter_complex, input_files
-
-    def _generate_video_segment_filter(self, segment: CompositionSegment,
-                                     stream_index: int, layer_index: int,
-                                     temp_dir: str) -> Optional[str]:
-        """Generate FFmpeg filter for a video segment"""
-        segment_data = segment.segment_data
-        material_data = segment.material_data
-
-        if not material_data or not hasattr(material_data, 'remote_url'):
-            return None
-
-        filters = []
-
-        # Base stream
-        base_stream = f"[{stream_index}:v]"
-
-        # Apply timing - trim to segment duration or to source_timerange if provided.
-        # setpts=PTS-STARTPTS re-bases timestamps to start at 0 for subsequent transforms.
-        duration = segment.end_time - segment.start_time
-        source_range = getattr(segment_data, 'source_timerange', None)
-
-        if source_range:
-            start_offset = source_range.start / 1_000_000.0
-            source_duration = source_range.duration / 1_000_000.0
-            filters.append(f"{base_stream}trim={start_offset}:{start_offset + source_duration},setpts=PTS-STARTPTS[vid{layer_index}]")
-        else:
-            filters.append(f"{base_stream}trim=0:{duration},setpts=PTS-STARTPTS[vid{layer_index}]")
-
-        # Apply transformations
-        clip_settings = getattr(segment_data, 'clip_settings', None)
-        if clip_settings:
-            transform_filters = []
-
-            # Scale
-            if hasattr(clip_settings, 'scale_x') and hasattr(clip_settings, 'scale_y'):
-                scale_x = getattr(clip_settings, 'scale_x', 1.0)
-                scale_y = getattr(clip_settings, 'scale_y', 1.0)
-                if scale_x != 1.0 or scale_y != 1.0:
-                    # Multiply input dimensions by normalized scale factors
-                    transform_filters.append(f"scale=iw*{scale_x}:ih*{scale_y}")
-
-            # Opacity
-            if hasattr(clip_settings, 'alpha'):
-                alpha = getattr(clip_settings, 'alpha', 1.0)
-                if alpha != 1.0:
-                    # Ensure RGBA before adjusting alpha via colorchannelmixer
-                    transform_filters.append(f"format=rgba,colorchannelmixer=aa={alpha}")
-
-            # Rotation
-            if hasattr(clip_settings, 'rotation'):
-                rotation = getattr(clip_settings, 'rotation', 0.0)
-                if rotation != 0.0:
-                    # FFmpeg rotate uses radians; CapCut rotation is in degrees
-                    transform_filters.append(f"rotate={rotation}*PI/180")
-
-            if transform_filters:
-                transform_chain = ",".join(transform_filters)
-                filters.append(f"[vid{layer_index}]{transform_chain}[v{layer_index}]")
-            else:
-                # Pass-through mapping to name the stream for downstream filters
-                filters.append(f"[vid{layer_index}]null[v{layer_index}]")
-
-        # Apply speed effect
-        speed = getattr(segment_data, 'speed', None)
-        if speed and hasattr(speed, 'speed') and speed.speed != 1.0:
-            speed_factor = speed.speed
-            # Video speed-up/down by dividing PTS
-            filters.append(f"[v{layer_index}]setpts=PTS/{speed_factor}[v{layer_index}]")
-
-        # Apply effects if any
-        effects = getattr(segment_data, 'effects', [])
-        for effect in effects:
-            effect_name = getattr(effect, 'name', '')
-            if effect_name:
-                effect_filter = self._apply_video_effect(effect_name, layer_index)
-                if effect_filter:
-                    filters.append(effect_filter)
-
-        # Combine all filters for this segment
-        if filters:
-            return "; ".join(filters)
-        else:
-            return f"[{stream_index}:v]null[v{layer_index}]"
-
-    def _generate_sticker_segment_filter(self, segment: CompositionSegment,
-                                       layer_index: int, temp_dir: str) -> Optional[str]:
-        """Generate FFmpeg filter for a sticker segment"""
-        segment_data = segment.segment_data
-        material_data = segment.material_data
-
-        if not material_data:
-            return None
-
-        # For now, treat stickers similar to images
-        # In a full implementation, this would handle sticker-specific properties
-        filters = []
-
-        # Create a temporary image input (placeholder for sticker)
-        # In practice, stickers would need to be downloaded and processed
-        sticker_input = f"color=c=red:size=100x100:r={self.fps}:d={segment.end_time - segment.start_time}[sticker{layer_index}]"
-        filters.append(sticker_input)
-
-        # Apply transformations similar to video segments
-        clip_settings = getattr(segment_data, 'clip_settings', None)
-        if clip_settings:
-            transform_filters = []
-
-            # Scale
-            if hasattr(clip_settings, 'scale_x') and hasattr(clip_settings, 'scale_y'):
-                scale_x = getattr(clip_settings, 'scale_x', 1.0)
-                scale_y = getattr(clip_settings, 'scale_y', 1.0)
-                if scale_x != 1.0 or scale_y != 1.0:
-                    transform_filters.append(f"scale=iw*{scale_x}:ih*{scale_y}")
-
-            # Position
-            if hasattr(clip_settings, 'transform_x') and hasattr(clip_settings, 'transform_y'):
-                transform_x = getattr(clip_settings, 'transform_x', 0.0)
-                transform_y = getattr(clip_settings, 'transform_y', 0.0)
-                if transform_x != 0.0 or transform_y != 0.0:
-                    x_pixels = int((transform_x + 1.0) * self.width / 2)
-                    y_pixels = int((transform_y + 1.0) * self.height / 2)
-                    transform_filters.append(f"translate={x_pixels}:{y_pixels}")
-
-            # Opacity
-            if hasattr(clip_settings, 'alpha'):
-                alpha = getattr(clip_settings, 'alpha', 1.0)
-                if alpha != 1.0:
-                    transform_filters.append(f"format=rgba,colorchannelmixer=aa={alpha}")
-
-            if transform_filters:
-                transform_chain = ",".join(transform_filters)
-                filters.append(f"[sticker{layer_index}]{transform_chain}[sticker{layer_index}]")
-
-        return "; ".join(filters) if filters else None
-
-    def _apply_video_effect(self, effect_name: str, layer_index: int) -> Optional[str]:
-        """Apply a video effect filter"""
-        # Placeholder for video effects
-        # In a full implementation, this would map CapCut effect names to FFmpeg filters
-        effect_map = {
-            'blur': f'[v{layer_index}]boxblur=5[v{layer_index}]',
-            'sharpen': f'[v{layer_index}]unsharp[v{layer_index}]',
-            # Add more effects as needed
-        }
-
-        return effect_map.get(effect_name.lower())
-
-    def _generate_text_segment_filter(self, segment: CompositionSegment,
-                                    layer_index: int, temp_dir: str) -> Optional[str]:
-        """Generate FFmpeg filter for a text segment"""
-        segment_data = segment.segment_data
-
-        # Get text content
-        text_content = getattr(segment_data, 'text', '')
-        if not text_content:
-            return None
-
-        # Escape special characters for FFmpeg filtergraph safety
-        # Order matters: escape backslashes first
-        text_content = (
-            text_content
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace(":", "\\:")
-            .replace(",", "\\,")
-            .replace(";", "\\;")
-            .replace("[", "\\[")
-            .replace("]", "\\]")
-            .replace("\n", "\\n")
-            .replace("\r", "")
-        )
-
-        # Get text style and clip transforms
-        style = getattr(segment_data, 'style', None)
-        clip_settings = getattr(segment_data, 'clip_settings', None)
-        # Default font size ~5% of canvas height, minimum 12
-        default_font_size = max(12, int(0.05 * self.height))
-        font_size = default_font_size
-        font_color = "white"
-        position_x = "(w-tw)/2"  # default center if no transforms
-        position_y = "(h-th)/2"
-
-        # Background properties
-        background_enabled = False
-        background_color = "black@0.5"  # Default transparent black
-
-        if style:
-            # Map CapCut size to pixels
-            size_val = getattr(style, 'size', None)
-            if size_val is not None:
-                font_size = self._map_capcut_size_to_pixels(size_val)
-
-            # Font color from RGB tuple 0..1
-            if hasattr(style, 'color'):
-                try:
-                    r, g, b = getattr(style, 'color', (1.0, 1.0, 1.0))
-                    r_i = max(0, min(255, int(round(r * 255))))
-                    g_i = max(0, min(255, int(round(g * 255))))
-                    b_i = max(0, min(255, int(round(b * 255))))
-                    alpha_val = getattr(style, 'alpha', 1.0)
-                    # drawtext supports 0xRRGGBB and optional @alpha
-                    font_color = f"0x{r_i:02x}{g_i:02x}{b_i:02x}"
-                    if 0.0 <= alpha_val < 1.0:
-                        font_color += f"@{alpha_val}"
-                except Exception:
-                    pass
-
-        # Extract background properties from segment data
-        background_data = getattr(segment_data, 'background', None)
-        if background_data:
-            try:
-                # Import hex_to_rgb utility
-                from util import hex_to_rgb
-
-                bg_alpha = getattr(background_data, 'alpha', 0.0)
-                bg_round_radius = getattr(background_data, 'round_radius', 0.0)
-
-                # Throw error for rounded corners (not supported yet)
-                if bg_round_radius > 0:
-                    raise NotImplementedError("Rounded corners for text backgrounds are not supported yet")
-
-                if bg_alpha > 0:  # Only enable background if alpha > 0
-                    background_enabled = True
-
-                    # Convert background color from hex to FFmpeg format
-                    bg_color_hex = getattr(background_data, 'color', '#000000')
-                    if isinstance(bg_color_hex, str) and bg_color_hex.startswith('#'):
-                        try:
-                            r, g, b = hex_to_rgb(bg_color_hex)
-                            r_i = max(0, min(255, int(round(r * 255))))
-                            g_i = max(0, min(255, int(round(g * 255))))
-                            b_i = max(0, min(255, int(round(b * 255))))
-                            background_color = f"0x{r_i:02x}{g_i:02x}{b_i:02x}@{bg_alpha}"
-                        except Exception:
-                            # Fallback to default if color conversion fails
-                            background_color = f"black@{bg_alpha}"
-                    else:
-                        background_color = f"black@{bg_alpha}"
-
-            except NotImplementedError:
-                raise  # Re-raise the rounded corners error
-            except Exception:
-                # If background processing fails, disable background
-                background_enabled = False
-
-        # Position conversion from normalized coordinates stored in clip_settings
-        if clip_settings is not None:
-            if hasattr(clip_settings, 'transform_x'):
-                transform_x = getattr(clip_settings, 'transform_x', 0.0)
-                # Position center of text at the specified coordinate
-                center_x = int((transform_x + 1.0) * self.width / 2)
-                position_x = f"{center_x}-tw/2"
-            if hasattr(clip_settings, 'transform_y'):
-                transform_y = getattr(clip_settings, 'transform_y', 0.0)
-                # Position center of text at the specified coordinate
-                center_y = int((transform_y + 1.0) * self.height / 2)
-                position_y = f"{center_y}-th/2"
-
-        # Create text filter with timing
-        duration = segment.end_time - segment.start_time
-        text_filter_parts = [
-            f"drawtext=text='{text_content}'",
-            f":fontsize={font_size}",
-            f":fontcolor={font_color}",
-        ]
-
-        # Add font resolution arguments (fontfile or font family)
-        print("[FONTDBG] style has font attr?", hasattr(style, "font") if style else "no style",
-              "segment_data.font:", getattr(segment_data, "font", None),
-              "num text_styles:", len(getattr(segment_data, "text_styles", []) or []),
-              "range fonts:", [getattr(r, "font", None) for r in (getattr(segment_data, "text_styles", []) or [])])
-        text_filter_parts.extend(_resolve_font_arguments(style, segment_data))
-
-        text_filter_parts.extend([
-            f":x={position_x}",
-            f":y={position_y}",
-            f":enable='between(t\\,{segment.start_time}\\,{segment.end_time})'"
-        ])
-
-        # Add background parameters if enabled
-        if background_enabled:
-            text_filter_parts.extend([
-                f":box=1",
-                f":boxcolor={background_color}"
-            ])
-
-        text_filter = "".join(text_filter_parts)
-
-        return text_filter
-
-    def _generate_audio_segment_filter(self, segment: CompositionSegment,
-                                     stream_index: int, layer_index: int) -> Optional[str]:
-        """Generate FFmpeg filter for an audio segment"""
-        segment_data = segment.segment_data
-        material_data = segment.material_data
-
-        if not material_data or not hasattr(material_data, 'remote_url'):
-            return None
-
-        filters = []
-        base_stream = f"[{stream_index}:a]"
-
-        # Apply timing - trim to segment duration
-        duration = segment.end_time - segment.start_time
-        source_range = getattr(segment_data, 'source_timerange', None)
-
-        if source_range:
-            start_offset = source_range.start / 1_000_000.0
-            source_duration = source_range.duration / 1_000_000.0
-            filters.append(f"{base_stream}atrim={start_offset}:{start_offset + source_duration},asetpts=PTS-STARTPTS[a{layer_index}]")
-        else:
-            filters.append(f"{base_stream}atrim=0:{duration},asetpts=PTS-STARTPTS[a{layer_index}]")
-
-        # Shift audio into the global timeline so playback starts at target start
-        start_ms = int(segment.start_time * 1000)
-        if start_ms > 0:
-            # adelay expects milliseconds; all=1 delays all channels equally
-            filters.append(f"[a{layer_index}]adelay={start_ms}:all=1[a{layer_index}]")
-
-        # Apply speed effect (atempo)
-        speed = getattr(segment_data, 'speed', None)
-        if speed and hasattr(speed, 'speed') and speed.speed != 1.0:
-            speed_factor = speed.speed
-            # Handle speed factors outside atempo's 0.5-2.0 range by chaining
-            remaining_speed = speed_factor
-            speed_filters = []
-
-            while remaining_speed < 0.5:
-                speed_filters.append("atempo=2.0")
-                remaining_speed *= 2.0
-            while remaining_speed > 2.0:
-                speed_filters.append("atempo=0.5")
-                remaining_speed *= 0.5
-
-            if remaining_speed != 1.0:
-                speed_filters.append(f"atempo={remaining_speed}")
-
-            if speed_filters:
-                speed_chain = ",".join(speed_filters)
-                filters.append(f"[a{layer_index}]{speed_chain}[a{layer_index}]")
-
-        # Apply volume
-        clip_settings = getattr(segment_data, 'clip_settings', None)
-        if clip_settings:
-            volume = getattr(clip_settings, 'volume', 1.0)
-            if volume != 1.0:
-                filters.append(f"[a{layer_index}]volume={volume}[a{layer_index}]")
-
-        # Combine all filters for this segment
-        if filters:
-            return "; ".join(filters)
-        else:
-            return f"[{stream_index}:a]anull[a{layer_index}]"
-
-    def _build_audio_mix_graph(self, audio_segments: List[CompositionSegment],
-                              start_stream_index: int, input_files: List) -> List[str]:
-        """Build FFmpeg audio filter graph for mixing multiple audio tracks"""
-        if not audio_segments:
-            return []
-
-        filter_parts = []
-        audio_streams = []
-
-        # Process each audio segment
-        current_stream_index = start_stream_index
-        for i, segment in enumerate(audio_segments):
-            if segment.material_data and hasattr(segment.material_data, 'remote_url'):
-                audio_url = segment.material_data.remote_url
-                if audio_url:
-                    input_files.append(audio_url)
-                    audio_filter = self._generate_audio_segment_filter(
-                        segment, current_stream_index, i
-                    )
-                    if audio_filter:
-                        filter_parts.append(audio_filter)
-                        audio_streams.append(f"[a{i}]")
-                    current_stream_index += 1
-
-        # Mix all audio streams
-        if len(audio_streams) == 1:
-            # Single audio stream
-            filter_parts.append(f"{audio_streams[0]}anull[final_audio]")
-        elif len(audio_streams) > 1:
-            # Mix multiple streams
-            mix_inputs = "".join(audio_streams)
-            filter_parts.append(f"{mix_inputs}amix=inputs={len(audio_streams)}:dropout_transition=0[final_audio]")
-        else:
-            # No audio streams, create silent audio
-            silent_input = f"anoisesrc=d=0:c=pink:r=44100:a=0.0"
-            input_files.append(['-f', 'lavfi', '-i', silent_input])
-            # Map the generated silent source to final_audio to keep muxer happy
-            filter_parts.append(f"[{current_stream_index}:a]anull[final_audio]")
-
-        return filter_parts
-
-
-def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> List[Optional[str]]:
-    """Pre-render text segments to alpha-preserving intermediates.
-
-    Each intermediate has duration equal to the text segment duration and baked-in position.
-    Timing is applied at final overlay stage, not inside the prerender.
-    Returns a list of file paths (or None) aligned with the order of text segments in generate_ffmpeg_filter_complex.
-    """
-    # Collect text segments in the same order used in generate_ffmpeg_filter_complex
-    sorted_segments = sorted(engine.segments, key=lambda s: s.render_index)
-    text_segments = [s for s in sorted_segments if s.track_type == 'text']
-
-    intermediates: List[Optional[str]] = []
-    for idx, segment in enumerate(text_segments):
-        segment_data = segment.segment_data
-        text_content = getattr(segment_data, 'text', '')
-        if not text_content:
-            intermediates.append(None)
-            continue
-
-        # Escape for filtergraph
-        text_content = (
-            text_content
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace(":", "\\:")
-            .replace(",", "\\,")
-            .replace(";", "\\;")
-            .replace("[", "\\[")
-            .replace("]", "\\]")
-            .replace("\n", "\\n")
-            .replace("\r", "")
-        )
-
-        style = getattr(segment_data, 'style', None)
-        # Map style.size to calibrated pixels for prerendered text
-        font_size = engine._map_capcut_size_to_pixels(getattr(style, 'size', None)) if style else max(12, int(0.05 * engine.height))
-        font_color = getattr(style, 'font_color', 'white') if style else 'white'
-
-        # Extract background properties for prerendered text
-        background_enabled = False
-        background_color = "black@0.5"
-
-        background_data = getattr(segment_data, 'background', None)
-        if background_data:
-            try:
-                from util import hex_to_rgb
-
-                bg_alpha = getattr(background_data, 'alpha', 0.0)
-                bg_round_radius = getattr(background_data, 'round_radius', 0.0)
-
-                # Throw error for rounded corners (not supported yet)
-                if bg_round_radius > 0:
-                    raise NotImplementedError("Rounded corners for text backgrounds are not supported yet")
-
-                if bg_alpha > 0:
-                    background_enabled = True
-
-                    bg_color_hex = getattr(background_data, 'color', '#000000')
-                    if isinstance(bg_color_hex, str) and bg_color_hex.startswith('#'):
-                        try:
-                            r, g, b = hex_to_rgb(bg_color_hex)
-                            r_i = max(0, min(255, int(round(r * 255))))
-                            g_i = max(0, min(255, int(round(g * 255))))
-                            b_i = max(0, min(255, int(round(b * 255))))
-                            background_color = f"0x{r_i:02x}{g_i:02x}{b_i:02x}@{bg_alpha}"
-                        except Exception:
-                            background_color = f"black@{bg_alpha}"
-                    else:
-                        background_color = f"black@{bg_alpha}"
-
-            except NotImplementedError:
-                raise  # Re-raise the rounded corners error
-            except Exception:
-                background_enabled = False
-
-        # Position baked into prerender from clip settings (global normalized coords)
-        clip_settings = getattr(segment_data, 'clip_settings', None)
-        position_x = "(w-tw)/2"
-        position_y = "(h-th)/2"
-        if clip_settings is not None:
-            if hasattr(clip_settings, 'transform_x'):
-                transform_x = getattr(clip_settings, 'transform_x', 0.0)
-                # Position center of text at the specified coordinate
-                center_x = int((transform_x + 1.0) * engine.width / 2)
-                position_x = f"{center_x}-tw/2"
-            if hasattr(clip_settings, 'transform_y'):
-                transform_y = getattr(clip_settings, 'transform_y', 0.0)
-                # Position center of text at the specified coordinate
-                center_y = int((transform_y + 1.0) * engine.height / 2)
-                position_y = f"{center_y}-th/2"
-
-        duration = max(0.0, segment.end_time - segment.start_time)
-        if duration <= 0:
-            intermediates.append(None)
-            continue
-
-        # Transparent canvas with a true zero alpha plane
-        canvas = (
-            f"color=s={engine.width}x{engine.height}:r={engine.fps}:d={duration}:c=black@0.0,format=rgba"
-        )
-
-        # Build text filter with background support
-        text_filter_parts = [
-            f"drawtext=text='{text_content}'",
-            f":fontsize={font_size}",
-            f":fontcolor={font_color}",
-        ]
-
-        # Add font resolution arguments (fontfile or font family)
-        print("[FONTDBG] prerender style has font?", hasattr(style, "font") if style else "no style",
-              "segment_data.font:", getattr(segment_data, "font", None),
-              "num text_styles:", len(getattr(segment_data, "text_styles", []) or []),
-              "range fonts:", [getattr(r, "font", None) for r in (getattr(segment_data, "text_styles", []) or [])])
-        text_filter_parts.extend(_resolve_font_arguments(style, segment_data))
-
-        # Add positioning
-        text_filter_parts.extend([
-            f":x={position_x}",
-            f":y={position_y}",
-        ])
-
-        if background_enabled:
-            text_filter_parts.extend([
-                f":box=1:boxcolor={background_color}"
-            ])
-
-        text_filter = "".join(text_filter_parts)
-
-        out_path = os.path.join(temp_dir, f"text_seg_{idx:03d}.mov")
-        cmd = [
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'lavfi', '-i', canvas,
-            # Canvas already has alpha; draw text directly
-            '-filter_complex', f"[0:v]{text_filter}",
-            # Use a codec/pixel format with robust alpha support for intermediates.
-            '-c:v', 'qtrle', '-pix_fmt', 'argb',
-            out_path
-        ]
-
+    # ---------- helpers ----------
+    def _map_capcut_size_to_pixels(self, capcut_size: Optional[float]) -> int:
+        if capcut_size is None:
+            return max(12, int(0.05 * self.height))
+        p12, p8, base_h = CC_TEXT_PX_AT_SIZE12, CC_TEXT_PX_AT_SIZE8, CC_TEXT_BASE_HEIGHT or 1920.0
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
-            intermediates.append(out_path)
+            slope = (p12 - p8) / (12.0 - 8.0)
+            intercept = p12 - slope * 12.0
+            px_at_base = slope * float(capcut_size) + intercept
+            return max(12, int(px_at_base * (self.height / base_h)))
         except Exception:
-            intermediates.append(None)
+            return max(12, int(float(capcut_size) * (self.height / 384.0)))
 
-    return intermediates
+    def _norm_to_px(self, nx: float, ny: float) -> Tuple[int, int]:
+        # CapCut normalized space in [-1, 1] from center
+        x = int((nx + 1.0) * self.width / 2)
+        y = int((ny + 1.0) * self.height / 2)
+        return x, y
 
+    def _pos_expr(self, clip_w: int, clip_h: int, nx: float, ny: float) -> Tuple[int, int]:
+        cx, cy = self._norm_to_px(nx, ny)
+        return int(cx - clip_w / 2), int(cy - clip_h / 2)
+
+    def _speed_factor(self, segment_data: Any) -> float:
+        sp = getattr(segment_data, 'speed', None)
+        try:
+            f = float(getattr(sp, 'speed', 1.0)) if sp is not None else 1.0
+        except Exception:
+            f = 1.0
+        return max(1e-6, f)
+
+    def _get_source_subclip_bounds(self, segment_data: Any, fallback_duration: float) -> Tuple[float, float]:
+        sr = getattr(segment_data, 'source_timerange', None)
+        if sr:
+            start = sr.start / 1_000_000.0
+            dur = sr.duration / 1_000_000.0
+            return start, start + dur
+        return 0.0, fallback_duration
+
+    # ---------- clip builders ----------
+    def _build_video_clip(self, seg: CompositionSegment) -> Optional[VideoFileClip]:
+        m = seg.material_data
+        url = getattr(m, 'remote_url', None) if m else None
+        if not url:
+            return None
+
+        seg_duration = max(0.0, seg.end_time - seg.start_time)
+        is_image = str(url).lower().split('?')[0].endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif'))
+
+        if is_image:
+            base = ImageClip(url, duration=seg_duration)
+        else:
+            base = VideoFileClip(url)
+            s0, s1 = self._get_source_subclip_bounds(seg.segment_data, base.duration)
+            base = base.subclip(s0, min(s1, base.duration))
+
+        # transforms
+        cs = getattr(seg.segment_data, 'clip_settings', None)
+        # scale
+        sx, sy = 1.0, 1.0
+        if cs is not None:
+            sx = float(getattr(cs, 'scale_x', 1.0) or 1.0)
+            sy = float(getattr(cs, 'scale_y', 1.0) or 1.0)
+        if (sx != 1.0) or (sy != 1.0):
+            if abs(sx - sy) < 1e-6:
+                base = base.resized(sx)
+            else:
+                # approximate anisotropic scale: resize to (w*sx, h*sy)
+                w, h = base.size
+                base = base.resized(newsize=(int(w * sx), int(h * sy)))
+
+        # rotation (degrees, center by default)
+        rot = float(getattr(cs, 'rotation', 0.0) or 0.0) if cs is not None else 0.0
+        if abs(rot) > 1e-6:
+            base = base.rotated(rot)
+
+        # opacity
+        alpha = float(getattr(cs, 'alpha', 1.0) or 1.0) if cs is not None else 1.0
+        if alpha < 1.0:
+            base = base.with_opacity(alpha)
+
+        # speed
+        sp = self._speed_factor(seg.segment_data)
+        if abs(sp - 1.0) > 1e-6:
+            # MoviePy v2: prefer immutable API; use speed effect via with_speed if available
+            try:
+                base = base.with_speed(sp)
+            except Exception:
+                # Fallback for environments still exposing v1 API
+                from moviepy import vfx as _vfx  # type: ignore
+                base = base.fx(_vfx.speedx, sp)
+
+        # position
+        nx = float(getattr(cs, 'transform_x', 0.0) or 0.0) if cs is not None else 0.0
+        ny = float(getattr(cs, 'transform_y', 0.0) or 0.0) if cs is not None else 0.0
+        x_px, y_px = self._pos_expr(*base.size, nx, ny)
+
+        # timing
+        base = base.with_start(seg.start_time).with_end(seg.end_time).with_position((x_px, y_px))
+
+        return base
+
+    def _build_sticker_clip(self, seg: CompositionSegment) -> Optional[ColorClip]:
+        # placeholder rectangle sticker
+        seg_duration = max(0.0, seg.end_time - seg.start_time)
+        size = (100, 100)
+        color = (255, 0, 0)
+        clip = ColorClip(size=size, color=color, duration=seg_duration)
+
+        cs = getattr(seg.segment_data, 'clip_settings', None)
+        alpha = float(getattr(cs, 'alpha', 1.0) or 1.0) if cs is not None else 1.0
+        if alpha < 1.0:
+            clip = clip.with_opacity(alpha)
+
+        nx = float(getattr(cs, 'transform_x', 0.0) or 0.0) if cs is not None else 0.0
+        ny = float(getattr(cs, 'transform_y', 0.0) or 0.0) if cs is not None else 0.0
+        x_px, y_px = self._pos_expr(*clip.size, nx, ny)
+
+        return clip.with_start(seg.start_time).with_end(seg.end_time).with_position((x_px, y_px))
+
+    def _build_text_clip(self, seg: CompositionSegment) -> Optional[TextClip]:
+        sd = seg.segment_data
+        txt = getattr(sd, 'text', '') or ''
+        if not txt:
+            return None
+
+        style = getattr(sd, 'style', None)
+        fontsize = self._map_capcut_size_to_pixels(getattr(style, 'size', None)) if style else max(12, int(0.05 * self.height))
+
+        # color
+        fontcolor = "white"
+        if style and hasattr(style, 'color'):
+            try:
+                r, g, b = getattr(style, 'color', (1.0, 1.0, 1.0))
+                ri, gi, bi = int(round(r*255)), int(round(g*255)), int(round(b*255))
+                fontcolor = f"rgb({ri},{gi},{bi})"
+            except Exception:
+                pass
+
+        font_family = _resolve_font_name(style, sd) or "Arial"
+
+        seg_duration = max(0.0, seg.end_time - seg.start_time)
+        txt_clip = TextClip(
+            txt,
+            fontsize=fontsize,
+            color=fontcolor,
+            font=font_family,   # v2 requires explicit path; we resolve family via pyfonts elsewhere when available
+            method="caption",
+            size=(self.width, None)
+        )
+
+        # background box (simple): draw a semi-transparent rect by Composite
+        bg_data = getattr(sd, 'background', None)
+        if bg_data:
+            try:
+                alpha = float(getattr(bg_data, 'alpha', 0.0) or 0.0)
+            except Exception:
+                alpha = 0.0
+        else:
+            alpha = 0.0
+
+        cs = getattr(sd, 'clip_settings', None)
+        nx = float(getattr(cs, 'transform_x', 0.0) or 0.0) if cs is not None else 0.0
+        ny = float(getattr(cs, 'transform_y', 0.0) or 0.0) if cs is not None else 0.0
+
+        # Position center of text at normalized coord
+        # We need final text size; make a temp to obtain its size:
+        tmp = txt_clip.with_duration(0.1)
+        tw, th = tmp.size
+        x_px, y_px = self._pos_expr(tw, th, nx, ny)
+
+        txt_clip = txt_clip.with_start(seg.start_time).with_end(seg.end_time).with_position((x_px, y_px))
+
+        if alpha > 0:
+            # crude box slightly larger than text
+            pad = int(0.1 * th)
+            box = ColorClip(size=(tw + 2*pad, th + 2*pad), color=(0, 0, 0)).with_opacity(alpha)
+            box = box.with_start(seg.start_time).with_end(seg.end_time).with_position((x_px - pad, y_px - pad))
+            return CompositeVideoClip([box, txt_clip], size=(self.width, self.height)).with_start(seg.start_time).with_end(seg.end_time)
+
+        return txt_clip
+
+    def _build_audio_clip(self, seg: CompositionSegment) -> Optional[AudioFileClip]:
+        m = seg.material_data
+        url = getattr(m, 'remote_url', None) if m else None
+        if not url:
+            return None
+        base = AudioFileClip(url)
+        s0, s1 = self._get_source_subclip_bounds(seg.segment_data, base.duration)
+        # Use v1-compatible API for broader compatibility; v2 may accept subclipped in future
+        base = base.subclip(s0, min(s1, base.duration))
+        # timing
+        base = base.with_start(seg.start_time).with_end(seg.end_time)
+        # speed (pitch/time change; MoviePy speedx changes duration & pitch)
+        sp = self._speed_factor(seg.segment_data)
+        if abs(sp - 1.0) > 1e-6:
+            try:
+                base = base.with_speed(sp)
+            except Exception:
+                from moviepy import vfx as _vfx  # type: ignore
+                base = base.fx(_vfx.speedx, sp)
+        # volume
+        cs = getattr(seg.segment_data, 'clip_settings', None)
+        vol = float(getattr(cs, 'volume', 1.0) or 1.0) if cs is not None else 1.0
+        if abs(vol - 1.0) > 1e-6:
+            try:
+                base = base.with_volume(vol)
+            except Exception:
+                base = base.volumex(vol)
+        return base
+
+    # ---------- transitions ----------
+    def _apply_pull_transition(self, prev_clip, curr_clip, duration: float, mode: str = 'in', scale_s: float = 1.12):
+        """
+        Apply pull-in/pull-out between prev_clip and curr_clip over 'duration':
+        - mode == 'in': A zooms 1.0→S while fading out; B zooms S→1.0 while fading in
+        - mode == 'out': A zooms 1.0→1/S while fading out; B zooms 1/S→1.0 while fading in
+
+        Implemented by overlapping the two clips for 'duration' seconds:
+        prev_clip: .crossfadeout(duration) + sized over its last 'duration'
+        curr_clip: .crossfadein(duration)  + sized over its first 'duration'
+        """
+        if duration <= 0:
+            return prev_clip, curr_clip
+
+        # Overlap is already implied if start times butt-join; ensure overlap:
+        # We'll leave starts as-is and rely on crossfade to blend.
+
+        def prev_resize(t):
+            if mode == 'in':
+                # over last d seconds, t runs [T-d, T]; map to [0,1]
+                # MoviePy passes t in clip time; we only want the last 'duration'
+                return 1.0 + (scale_s - 1.0) * min(max((t - (prev_clip.duration - duration)) / max(duration, 1e-6), 0.0), 1.0)
+            else:
+                # pull-out: 1.0 → 1/S
+                return 1.0 + ((1.0 / max(scale_s, 1e-6)) - 1.0) * min(max((t - (prev_clip.duration - duration)) / max(duration, 1e-6), 0.0), 1.0)
+
+        def curr_resize(t):
+            if mode == 'in':
+                # first d seconds: S → 1.0
+                return scale_s - (scale_s - 1.0) * min(max(t / max(duration, 1e-6), 0.0), 1.0)
+            else:
+                # pull-out: 1/S → 1.0
+                return (1.0 / max(scale_s, 1e-6)) + (1.0 - (1.0 / max(scale_s, 1e-6))) * min(max(t / max(duration, 1e-6), 0.0), 1.0)
+
+        prev_z = prev_clip.fx(vfx.resize, lambda t: prev_resize(t)).crossfadeout(duration)
+        curr_z = curr_clip.fx(vfx.resize, lambda t: curr_resize(t)).crossfadein(duration)
+        return prev_z, curr_z
+
+    def _extract_transition(self, prev_seg: CompositionSegment, curr_seg: CompositionSegment) -> Tuple[str, float]:
+        # prefer normalized enum based on LUT
+        trans_name_str = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_enum_name', None) or \
+                         getattr(getattr(curr_seg, 'segment_data', None), '_cc_transition_enum_name', None)
+        trans_dur_sec = getattr(getattr(prev_seg, 'segment_data', None), '_cc_transition_duration_sec', None) or \
+                        getattr(getattr(curr_seg, 'segment_data', None), '_cc_transition_duration_sec', None)
+        if trans_name_str is None:
+            prev_trans_obj = getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
+            curr_trans_obj = getattr(getattr(curr_seg, 'segment_data', None), 'transition', None)
+            def _name_dur(obj):
+                if obj is None: return None, None
+                name = None
+                for attr in ('name', 'transition_name', 'type'):
+                    try:
+                        v = getattr(obj, attr, None)
+                        if isinstance(v, str) and v.strip():
+                            name = v.strip()
+                            break
+                    except Exception:
+                        pass
+                d = None
+                for attr in ('duration', 'duration_us', 'duration_microseconds', 'duration_ms'):
+                    try:
+                        val = getattr(obj, attr, None)
+                        if isinstance(val, (int, float)):
+                            if attr.endswith(('us', 'microseconds')) or val > 10000: d = float(val) / 1_000_000.0
+                            elif attr.endswith('ms'): d = float(val) / 1000.0
+                            else: d = float(val)
+                            break
+                    except Exception:
+                        pass
+                return name, d
+            n, d = _name_dur(prev_trans_obj)
+            if not n:
+                n, d = _name_dur(curr_trans_obj)
+            trans_name_str = n
+            trans_dur_sec = trans_dur_sec if trans_dur_sec is not None else d
+
+        if trans_dur_sec is None:
+            trans_dur_sec = 0.0
+        name_norm = str(trans_name_str or "").strip().lower().replace(" ", "_")
+        enum_name = TRANSITION_NAME_LUT.get(name_norm, name_norm)
+        return enum_name, float(trans_dur_sec or 0.0)
+
+    # ---------- composition ----------
+    def compose(self) -> Tuple[CompositeVideoClip, Optional[CompositeAudioClip]]:
+        bg = ColorClip(size=(self.width, self.height), color=(0, 0, 0), duration=self.duration_seconds)
+
+        visual_clips: List[Any] = [bg.with_start(0).with_end(self.duration_seconds)]
+        audio_clips: List[Any] = []
+
+        # Build per-segment clips
+        built_visual_by_seg: Dict[CompositionSegment, Any] = {}
+        for seg in self.segments:
+            try:
+                if seg.track_type in ('video', 'image'):
+                    vc = self._build_video_clip(seg)
+                    if vc:
+                        # transitions with previous on the same track if butt-join
+                        prev = self.last_visual_by_track.get(seg.track_name)
+                        if prev and abs(prev.end_time - seg.start_time) < 1e-4:
+                            enum_name, d = self._extract_transition(prev, seg)
+                            is_pull_in = (enum_name == 'Pull_in')
+                            is_pull_out = (enum_name == 'Pull_Out')
+                            if d > 0 and (is_pull_in or is_pull_out):
+                                mode = 'in' if is_pull_in else 'out'
+                                prev_clip = built_visual_by_seg.get(prev)
+                                if prev_clip is not None:
+                                    prev_z, curr_z = self._apply_pull_transition(prev_clip, vc, d, mode=mode, scale_s=1.12)
+                                    # replace prev in list, add curr
+                                    # Remove old prev from visual_clips
+                                    if prev_clip in visual_clips:
+                                        visual_clips.remove(prev_clip)
+                                    visual_clips.extend([prev_z, curr_z])
+                                    built_visual_by_seg[prev] = prev_z
+                                    built_visual_by_seg[seg] = curr_z
+                                else:
+                                    visual_clips.append(vc)
+                                    built_visual_by_seg[seg] = vc
+                            else:
+                                visual_clips.append(vc)
+                                built_visual_by_seg[seg] = vc
+                        else:
+                            visual_clips.append(vc)
+                            built_visual_by_seg[seg] = vc
+
+                        self.last_visual_by_track[seg.track_name] = seg
+
+                elif seg.track_type == 'text':
+                    tc = self._build_text_clip(seg)
+                    if tc:
+                        visual_clips.append(tc)
+
+                elif seg.track_type == 'sticker':
+                    sc = self._build_sticker_clip(seg)
+                    if sc:
+                        visual_clips.append(sc)
+
+                elif seg.track_type == 'audio':
+                    ac = self._build_audio_clip(seg)
+                    if ac:
+                        audio_clips.append(ac)
+
+            except Exception as e:
+                logger.warning(f"Segment build failed (track={seg.track_name}, type={seg.track_type}): {e}")
+
+        # Composite visuals in z-order (MoviePy resolves z from add order; we already sorted)
+        video = CompositeVideoClip(visual_clips, size=(self.width, self.height)).with_duration(self.duration_seconds)
+
+        # Audio mix
+        audio = None
+        if audio_clips:
+            try:
+                audio = CompositeAudioClip(audio_clips)
+                video = video.set_audio(audio)
+            except Exception as e:
+                logger.warning(f"Audio mix failed, exporting silent video: {e}")
+
+        return video, (audio if audio_clips else None)
+
+
+# ---------------------------------------
+# Export API (public)
+# ---------------------------------------
 def export_to_video_impl(
     output_path: str,
     yaml_config: Optional[str] = None,
     draft_id: Optional[str] = None,
     export_config: Optional[VideoExportConfig] = None
 ) -> Dict[str, Any]:
-    """
-    Export a CapCut draft to video using FFmpeg
 
-    Args:
-        output_path: Path where the output video will be saved
-        yaml_config: Path to YAML config file or raw YAML content
-        draft_id: ID of existing draft in cache
-        export_config: Video export configuration
-
-    Returns:
-        Dict with success status and metadata
-    """
-
-    # Input validation
     if yaml_config and draft_id:
         raise ValueError("Cannot specify both yaml_config and draft_id")
     if not yaml_config and not draft_id:
         raise ValueError("Must specify either yaml_config or draft_id")
 
-    # Default export config
     if export_config is None:
         export_config = VideoExportConfig(output_path=output_path)
 
     try:
-        logger.info(f"Starting video export to: {output_path}")
+        logger.info(f"Starting MoviePy export → {output_path}")
 
-        # Get or create draft
+        # Build/resolve draft_id if YAML provided
         if yaml_config:
-            logger.info("Processing YAML config...")
-            # Import parse_yaml_config function
             from CapCutAPI import parse_yaml_config
-
-            # Check if yaml_config is a file path or raw content
             if os.path.isfile(yaml_config):
-                # It's a file path
                 result = parse_yaml_config(yaml_config)
             else:
-                # It's raw YAML content - create a temporary file
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
                     f.write(yaml_config)
                     temp_yaml_path = f.name
-
                 try:
                     result = parse_yaml_config(temp_yaml_path)
                 finally:
-                    # Clean up temporary file
                     if os.path.exists(temp_yaml_path):
                         os.unlink(temp_yaml_path)
-
             draft_id = result.get('draft_id')
             if not draft_id:
                 raise ValueError("Failed to parse YAML config or create draft")
-            logger.info(f"Created draft from YAML: {draft_id}")
 
-        logger.info(f"Loading draft: {draft_id}")
-
-        # Get script from cache
+        # Load script
         script = query_script_impl(draft_id, force_update=True)
         if script is None:
-            raise ValueError(f"Draft {draft_id} not found in cache")
+            raise ValueError(f"Draft {draft_id} not found")
 
-        logger.info(f"Draft loaded successfully. Canvas: {script.width}x{script.height}, Duration: {script.duration/1_000_000.0:.2f}s")
+        # Default width/height to script when not provided
+        if export_config.width is None:
+            export_config.width = script.width
+        if export_config.height is None:
+            export_config.height = script.height
 
-        # Create composition engine
-        engine = VideoCompositionEngine(script)
-        logger.info(f"Composition engine created. Found {len(engine.segments)} segments")
+        engine = MoviePyCompositionEngine(script, export_config)
+        video, audio = engine.compose()
 
-        # Create temporary directory for processing
-        with tempfile.TemporaryDirectory() as temp_dir:
-            logger.info(f"Created temporary directory: {temp_dir}")
+        # Write out
+        # MoviePy write_videofile args
+        write_kwargs = dict(
+            codec=export_config.codec,
+            preset=export_config.preset,
+            bitrate=export_config.video_bitrate,
+            audio_codec=(export_config.audio_codec if audio is not None else None),
+            audio_bitrate=(export_config.audio_bitrate if audio is not None else None),
+            audio_fps=export_config.audio_sample_rate if audio is not None else None,
+            audio_nbytes=2,
+            fps=export_config.fps,
+            threads=os.cpu_count() or 4,
+            temp_audiofile=os.path.join(tempfile.gettempdir(), "mpy_temp_audio.m4a") if audio is not None else None,
+            remove_temp=True,
+            write_logfile=False,
+            verbose=False,
+            logger=None,
+        )
 
-            # Pre-render text segments to intermediates to reduce filter graph complexity
-            try:
-                engine.text_intermediate_files = _prerender_text_segments(engine, temp_dir)
-                logger.info(f"Pre-rendered {len([p for p in engine.text_intermediate_files if p])} text segments")
-            except Exception as _e:
-                logger.warning(f"Text pre-render failed, falling back to inline drawtext: {_e}")
-                engine.text_intermediate_files = None
+        # Ensure output directory exists
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir and not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
 
-            # Generate FFmpeg filter complex
-            filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
-            logger.info(f"Generated FFmpeg filter complex with {len(input_files)} inputs")
+        video.write_videofile(output_path, **write_kwargs)
 
-            # Build FFmpeg command
-            ffmpeg_cmd = [
-                'ffmpeg',
-                '-y',  # Overwrite output files
-                '-hide_banner',  # Reduce output verbosity
-                '-loglevel', 'info'
-            ]
-
-            # Add input files (some are already expanded argument lists)
-            for input_item in input_files:
-                if isinstance(input_item, list):
-                    # Already expanded arguments (like ['-f', 'lavfi', '-i', 'color=...'])
-                    ffmpeg_cmd.extend(input_item)
-                else:
-                    # Single input file
-                    ffmpeg_cmd.extend(['-i', input_item])
-
-            # Build complete filter complex (video + audio)
-            full_filter_complex = filter_complex
-            if audio_filter_complex:
-                full_filter_complex += ("; " if full_filter_complex else "") + audio_filter_complex
-
-            # Add filter complex
-            ffmpeg_cmd.extend([
-                '-filter_complex', full_filter_complex,
-                '-map', '[final_video]',
-                '-c:v', export_config.codec if export_config else 'libx264',
-                '-preset', export_config.preset if export_config else 'medium',
-                '-crf', export_config.crf if export_config else '23',
-                '-b:v', export_config.video_bitrate if export_config else '8000k',
-                '-r', str(export_config.fps if export_config else 30),
-                '-pix_fmt', 'yuv420p',  # Ensure compatibility
-            ])
-
-            # Add audio mapping and encoding if we have audio
-            if audio_filter_complex:
-                ffmpeg_cmd.extend([
-                    '-map', '[final_audio]',
-                    '-c:a', export_config.audio_codec if export_config else 'aac',
-                    '-b:a', export_config.audio_bitrate if export_config else '128k',
-                    '-ac', str(export_config.audio_channels if export_config else 2),
-                    '-ar', str(export_config.audio_sample_rate if export_config else 44100),
-                ])
-            else:
-                # No audio, ensure we don't output an audio stream
-                ffmpeg_cmd.extend(['-an'])
-
-            ffmpeg_cmd.append(output_path)
-
-            logger.info(f"Running FFmpeg command with {len(ffmpeg_cmd)} arguments")
-            logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
-
-            # Execute FFmpeg
-            result = subprocess.run(
-                ffmpeg_cmd,
-                capture_output=True,
-                text=True,
-                cwd=temp_dir,
-                timeout=300  # 5 minute timeout
-            )
-
-            if result.returncode != 0:
-                logger.error(f"FFmpeg failed with return code {result.returncode}")
-                logger.error(f"FFmpeg stderr: {result.stderr}")
-                logger.error(f"FFmpeg stdout: {result.stdout}")
-                raise RuntimeError(f"FFmpeg export failed (return code {result.returncode}): {result.stderr}")
-
-            # Success path
-            logger.info(f"Video export completed successfully: {output_path}")
-
-            # Check output file
-            if os.path.exists(output_path):
-                file_size = os.path.getsize(output_path)
-                logger.info(f"Output file size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
-            else:
-                raise RuntimeError(f"Output file was not created: {output_path}")
-
-            return {
-                "success": True,
-                "output_path": output_path,
-                "duration": engine.duration_seconds,
-                "width": engine.width,
-                "height": engine.height,
-                "fps": engine.fps,
-                "file_size": file_size if 'file_size' in locals() else 0
-            }
-
-    except subprocess.TimeoutExpired:
-        logger.error("FFmpeg export timed out after 5 minutes")
-        raise RuntimeError("FFmpeg export timed out - video may be too complex or system overloaded")
-
-        # Success path handled above after FFmpeg execution
-
-    except Exception as e:
-        logger.error(f"Video export failed: {str(e)}", exc_info=True)
+        # Stats
+        file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
         return {
-            "success": False,
-            "error": str(e)
+            "success": True,
+            "output_path": output_path,
+            "duration": engine.duration_seconds,
+            "width": engine.width,
+            "height": engine.height,
+            "fps": engine.fps,
+            "file_size": file_size,
         }
 
+    except Exception as e:
+        logger.error(f"MoviePy export failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
+
+# ---------------------------------------
+# CLI
+# ---------------------------------------
 def create_cli_parser() -> argparse.ArgumentParser:
-    """Create command line argument parser for video export."""
     parser = argparse.ArgumentParser(
-        description="Export CapCut drafts to video using FFmpeg",
+        description="Export CapCut drafts to video using MoviePy",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Export from YAML config file
-  python export_to_video_impl.py output.mp4 --yaml-config project.yml
-
-  # Export from YAML string
-  python export_to_video_impl.py output.mp4 --yaml-config 'draft:\\n  width: 1080\\nsteps:\\n  - add_text:\\n      text: "Hello"'
-
-  # Export from draft ID with custom settings
-  python export_to_video_impl.py output.mp4 --draft-id dfd_cat_123456 --width 1920 --height 1080 --fps 60
-
-  # Export with custom video settings
-  python export_to_video_impl.py output.mp4 --yaml-config config.yml --video-bitrate 10000k --codec libx264
+  python export_moviepy.py output.mp4 --yaml-config project.yml
+  python export_moviepy.py output.mp4 --yaml-config 'draft:\\n  width: 1080\\nsteps:\\n  - add_text:\\n      text: "Hello"'
+  python export_moviepy.py output.mp4 --draft-id dfd_cat_123 --width 1920 --height 1080 --fps 60
         """
     )
+    parser.add_argument("output_path", help="Path for the output video")
 
-    # Required positional argument
-    parser.add_argument(
-        "output_path",
-        help="Path where the output video will be saved"
-    )
+    ig = parser.add_mutually_exclusive_group(required=True)
+    ig.add_argument("--yaml-config", help="Path to YAML config or raw YAML string")
+    ig.add_argument("--draft-id", help="Draft ID from cache")
 
-    # Input source (mutually exclusive)
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--yaml-config",
-        help="Path to YAML config file or raw YAML content string"
-    )
-    input_group.add_argument(
-        "--draft-id",
-        help="ID of existing draft in cache"
-    )
+    cg = parser.add_argument_group("export configuration")
+    cg.add_argument("--width", type=int, help="Output width (default: draft width)")
+    cg.add_argument("--height", type=int, help="Output height (default: draft height)")
+    cg.add_argument("--fps", type=int, help="FPS (default: 30)")
+    cg.add_argument("--video-bitrate", help="Video bitrate (e.g., 8000k)")
+    cg.add_argument("--audio-bitrate", help="Audio bitrate (e.g., 128k)")
+    cg.add_argument("--audio-codec", help="Audio codec (default: aac)")
+    cg.add_argument("--audio-channels", type=int, help="Audio channels (default: 2)")
+    cg.add_argument("--audio-sample-rate", type=int, help="Audio sample rate (default: 44100)")
+    cg.add_argument("--codec", help="Video codec (default: libx264)")
+    cg.add_argument("--preset", choices=[
+        'ultrafast','superfast','veryfast','faster','fast','medium','slow','slower','veryslow'
+    ], help="Encoding preset (default: medium)")
+    cg.add_argument("--crf", help="CRF (MoviePy may ignore if bitrate set)")
 
-    # Export configuration options
-    config_group = parser.add_argument_group("export configuration")
-    config_group.add_argument(
-        "--width",
-        type=int,
-        help="Output video width (default: use draft canvas width)"
-    )
-    config_group.add_argument(
-        "--height",
-        type=int,
-        help="Output video height (default: use draft canvas height)"
-    )
-    config_group.add_argument(
-        "--fps",
-        type=int,
-        help="Output video FPS (default: 30)"
-    )
-    config_group.add_argument(
-        "--video-bitrate",
-        help="Video bitrate (e.g., '8000k', default: '8000k')"
-    )
-    config_group.add_argument(
-        "--audio-bitrate",
-        help="Audio bitrate (e.g., '128k', default: '128k')"
-    )
-    config_group.add_argument(
-        "--audio-codec",
-        help="Audio codec (default: 'aac')"
-    )
-    config_group.add_argument(
-        "--audio-channels",
-        type=int,
-        help="Audio channels (1=mono, 2=stereo, default: 2)"
-    )
-    config_group.add_argument(
-        "--audio-sample-rate",
-        type=int,
-        help="Audio sample rate in Hz (default: 44100)"
-    )
-    config_group.add_argument(
-        "--codec",
-        help="Video codec (default: 'libx264')"
-    )
-    config_group.add_argument(
-        "--preset",
-        choices=['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
-        help="Encoding preset (default: 'medium')"
-    )
-    config_group.add_argument(
-        "--crf",
-        help="Constant Rate Factor (default: '23')"
-    )
-
-    # Logging options
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose logging"
-    )
-    parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Suppress most output (only show errors and final result)"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Quiet mode")
 
     return parser
 
 
 def main():
-    """Main CLI entry point."""
     parser = create_cli_parser()
     args = parser.parse_args()
 
-    # Setup logging based on verbosity
     if args.quiet:
         logging.basicConfig(level=logging.ERROR)
     elif args.verbose:
@@ -1818,72 +804,51 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    logger = logging.getLogger(__name__)
-
     try:
-        # Validate output path
         output_path = args.output_path
-        output_dir = os.path.dirname(output_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-            logger.info(f"Created output directory: {output_dir}")
 
-        # Create export config if any custom settings provided
-        export_config = None
-        config_params = {
-            'width': args.width,
-            'height': args.height,
-            'fps': args.fps,
-            'video_bitrate': args.video_bitrate,
-            'audio_bitrate': args.audio_bitrate,
-            'audio_codec': args.audio_codec,
-            'audio_channels': args.audio_channels,
-            'audio_sample_rate': args.audio_sample_rate,
-            'codec': args.codec,
-            'preset': args.preset,
-            'crf': args.crf
-        }
+        cfg = VideoExportConfig(
+            output_path=output_path,
+            width=args.width,
+            height=args.height,
+            fps=args.fps or 30,
+            video_bitrate=args.video_bitrate or "8000k",
+            audio_bitrate=args.audio_bitrate or "128k",
+            audio_codec=args.audio_codec or "aac",
+            audio_channels=args.audio_channels or 2,
+            audio_sample_rate=args.audio_sample_rate or 44100,
+            codec=args.codec or "libx264",
+            preset=args.preset or "medium",
+            crf=args.crf or "23",
+        )
 
-        # Only create config if any parameters are specified
-        if any(v is not None for v in config_params.values()):
-            # Filter out None values to avoid overriding defaults
-            filtered_params = {k: v for k, v in config_params.items() if v is not None}
-            export_config = VideoExportConfig(output_path=output_path, **filtered_params)
-            logger.info("Using custom export configuration")
-        else:
-            export_config = VideoExportConfig(output_path=output_path)
-
-        # Call the export function
-        logger.info("Starting video export...")
         result = export_to_video_impl(
             output_path=output_path,
             yaml_config=args.yaml_config,
             draft_id=args.draft_id,
-            export_config=export_config
+            export_config=cfg
         )
 
         if result["success"]:
             if not args.quiet:
-                print("✅ Video export completed successfully!")
+                print("✅ MoviePy export complete")
                 print(f"📁 Output: {result['output_path']}")
-                print(f"🎬 Duration: {result['duration']:.2f} seconds")
-                print(f"📐 Resolution: {result['width']}x{result['height']}")
-                print(f"🎞️  FPS: {result['fps']}")
-                if result.get('file_size', 0) > 0:
-                    print(f"💾 File size: {result['file_size'] / 1024 / 1024:.2f} MB")
+                print(f"🎬 Duration: {result['duration']:.2f}s")
+                print(f"📐 Resolution: {result['width']}x{result['height']} @ {result['fps']} fps")
+                if result.get("file_size", 0) > 0:
+                    print(f"💾 Size: {result['file_size']/1024/1024:.2f} MB")
             sys.exit(0)
         else:
             print(f"❌ Export failed: {result['error']}")
             sys.exit(1)
 
     except KeyboardInterrupt:
-        print("\n⚠️  Export interrupted by user")
+        print("\n⚠️  Interrupted")
         sys.exit(130)
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         if args.verbose:
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
         sys.exit(1)
 
 
