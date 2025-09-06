@@ -1973,27 +1973,48 @@ def export_to_video_impl(
             # Pre-render text segments to intermediates to reduce filter graph complexity (existing behavior)
             _attach_prerendered_text(engine, temp_dir, logger)
 
-            # Try multi-pass pipeline first; on failure, fall back to monolithic command
-            used_multipass = False
-            try:
-                logger.info("Multipass: building visual tracks…")
-                track_videos, overlay_order = _build_visual_tracks(engine, temp_dir)
-                logger.info(f"Multipass: built {len(track_videos)} visual track(s)")
+            # Gate multipass behind environment variable to avoid regressions by default
+            use_multipass = str(os.environ.get('CAPCUT_USE_MULTIPASS', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+            if use_multipass:
+                used_multipass = False
+                try:
+                    logger.info("Multipass enabled: building visual tracks…")
+                    track_videos, overlay_order = _build_visual_tracks(engine, temp_dir)
+                    logger.info(f"Multipass: built {len(track_videos)} visual track(s)")
 
-                logger.info("Multipass: composing final output from tracks…")
-                _compose_final_from_tracks(
-                    engine=engine,
-                    track_videos=track_videos,
-                    overlay_order=overlay_order,
-                    temp_dir=temp_dir,
-                    export_config=export_config,
-                    output_path=output_path,
-                )
-                used_multipass = True
-            except Exception as mp_err:
-                logger.warning(f"Multipass pipeline failed; falling back to monolithic ffmpeg. Reason: {mp_err}")
+                    logger.info("Multipass: composing final output from tracks…")
+                    _compose_final_from_tracks(
+                        engine=engine,
+                        track_videos=track_videos,
+                        overlay_order=overlay_order,
+                        temp_dir=temp_dir,
+                        export_config=export_config,
+                        output_path=output_path,
+                    )
+                    used_multipass = True
+                except Exception as mp_err:
+                    logger.warning(f"Multipass pipeline failed; falling back to monolithic ffmpeg. Reason: {mp_err}")
 
-            if not used_multipass:
+                if used_multipass:
+                    # Success path (multipass)
+                    logger.info(f"Video export completed successfully: {output_path}")
+                    # Check output file
+                    if os.path.exists(output_path):
+                        file_size = os.path.getsize(output_path)
+                        logger.info(f"Output file size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
+                    else:
+                        raise RuntimeError(f"Output file was not created: {output_path}")
+                    return {
+                        "success": True,
+                        "output_path": output_path,
+                        "duration": engine.duration_seconds,
+                        "width": engine.width,
+                        "height": engine.height,
+                        "fps": engine.fps,
+                        "file_size": file_size if 'file_size' in locals() else 0
+                    }
+
+            # Default/backup: monolithic single-command path
                 # Generate FFmpeg filter complex (original one-shot flow)
                 filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
                 logger.info(f"Generated FFmpeg filter complex with {len(input_files)} inputs")
@@ -2025,7 +2046,7 @@ def export_to_video_impl(
                     logger.error(f"FFmpeg stdout: {result.stdout}")
                     raise RuntimeError(f"FFmpeg export failed (return code {result.returncode}): {result.stderr}")
 
-            # Success path (either multipass or monolithic)
+            # Success path (monolithic)
             logger.info(f"Video export completed successfully: {output_path}")
 
             # Check output file
