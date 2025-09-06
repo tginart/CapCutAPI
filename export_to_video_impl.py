@@ -1634,11 +1634,322 @@ def _build_ffmpeg_cmd(
     cmd.append(output_path)
     return cmd
 
+
+# ------------------------------ Multi-pass pipeline helpers ------------------------------
+
+def _transparent_clip(engine: VideoCompositionEngine, duration: float, temp_dir: str, tag: str) -> str:
+    """Create a transparent full-canvas clip of the requested duration.
+
+    Uses a fast intra codec with alpha. Duration is clamped to non-negative.
+    """
+    d = max(0.0, float(duration))
+    # Round duration to whole frames to avoid off-by-one gaps
+    frame_count = int(round(d * float(engine.fps)))
+    d_rounded = frame_count / float(engine.fps) if frame_count > 0 else 0.0
+    out_path = os.path.join(temp_dir, f"gap_{tag}_{abs(hash((tag, d))) & 0xFFFF:x}.mov")
+    cmd = [
+        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', f"color=c=black@0:size={engine.width}x{engine.height}:r={engine.fps}:d={d_rounded}",
+        '-vf', f"fps=fps={engine.fps},format=yuva444p",
+        '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le', '-r', str(engine.fps),
+        out_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
+    return out_path
+
+
+def _render_visual_segment_clip(engine: VideoCompositionEngine, segment: CompositionSegment, temp_dir: str,
+                                text_intermediate_map: Dict[int, Optional[str]]) -> Optional[str]:
+    """Render a single visual segment (video/image/text) to a full-canvas clip with alpha.
+
+    - Video/Image: trims to source/target, applies transforms, overlays onto transparent canvas
+    - Text: uses prerendered intermediate for the specific text segment
+    Returns output path or None on skip.
+    """
+    seg_type = segment.track_type
+
+    # Text: reuse prerendered file
+    if seg_type == 'text':
+        # text_intermediate_map is keyed by the global ordered text index
+        idx = getattr(segment.segment_data, '_text_global_index', None)
+        if idx is None:
+            return None
+        return text_intermediate_map.get(idx) or None
+
+    if seg_type not in ['video', 'image']:
+        return None
+
+    material = segment.material_data
+    if not material or not hasattr(material, 'remote_url') or not material.remote_url:
+        return None
+
+    duration = max(0.0, segment.end_time - segment.start_time)
+    if duration <= 0:
+        return None
+
+    # Inputs:
+    #   0: transparent canvas
+    #   1: source media (video or image)
+    canvas = f"color=c=black@0:size={engine.width}x{engine.height}:r={engine.fps}:d={duration}"
+
+    inputs: List[Union[str, List[str]]] = [['-f', 'lavfi', '-i', canvas]]
+    source_url: str = material.remote_url
+
+    # Image vs video handling for input 1
+    if engine._is_image_media(segment):
+        inputs.append(['-loop', '1', '-t', f"{duration}", '-i', source_url])
+    else:
+        inputs.append(source_url)
+
+    # Build per-segment filter
+    filters: List[str] = []
+    base_stream = "[1:v]"
+
+    # Source trim based on source_timerange or duration
+    segment_data = segment.segment_data
+    source_range = getattr(segment_data, 'source_timerange', None)
+    if source_range is not None:
+        start_offset = source_range.start / 1_000_000.0
+        source_duration = max(0.0, source_range.duration / 1_000_000.0)
+        filters.append(f"{base_stream}trim={start_offset}:{start_offset + source_duration},setpts=PTS-STARTPTS[V1]")
+    else:
+        filters.append(f"{base_stream}trim=0:{duration},setpts=PTS-STARTPTS[V1]")
+
+    # Transforms: scale, opacity, rotation
+    transform_filters: List[str] = []
+    clip_settings = getattr(segment_data, 'clip_settings', None)
+    if clip_settings is not None:
+        if hasattr(clip_settings, 'scale_x') and hasattr(clip_settings, 'scale_y'):
+            sx = getattr(clip_settings, 'scale_x', 1.0) or 1.0
+            sy = getattr(clip_settings, 'scale_y', 1.0) or 1.0
+            if sx != 1.0 or sy != 1.0:
+                transform_filters.append(f"scale=iw*{sx}:ih*{sy}")
+        if hasattr(clip_settings, 'alpha'):
+            a = getattr(clip_settings, 'alpha', 1.0)
+            if a != 1.0:
+                transform_filters.append("format=rgba,colorchannelmixer=aa={}".format(a))
+        if hasattr(clip_settings, 'rotation'):
+            deg = getattr(clip_settings, 'rotation', 0.0)
+            if deg:
+                transform_filters.append(f"rotate={deg}*PI/180")
+
+    if transform_filters:
+        filters.append("[V1]" + ",".join(transform_filters) + "[V1]")
+
+    # Speed
+    speed_obj = getattr(segment_data, 'speed', None)
+    if speed_obj is not None and hasattr(speed_obj, 'speed'):
+        try:
+            spd = float(speed_obj.speed)
+        except Exception:
+            spd = 1.0
+        if spd and spd != 1.0:
+            filters.append(f"[V1]setpts=PTS/{spd}[V1]")
+
+    # Normalize frame rate and ensure RGBA (with alpha) prior to overlay
+    filters.append(f"[V1]fps=fps={engine.fps},format=rgba[V1]")
+
+    # Ensure base canvas carries alpha so output preserves transparency
+    filters.append("[0:v]format=rgba[B0]")
+
+    # Compute overlay coordinates
+    ox, oy = engine._overlay_coords(segment)
+
+    # Compose on transparent canvas without premature termination
+    # use eof_action=pass so the base continues; force RGBA output to preserve alpha outside the drawn region
+    filters.append(f"[B0][V1]overlay=x={ox}-w/2:y={oy}-h/2:eof_action=pass:format=auto[V]")
+    filters.append("[V]format=rgba[V]")
+
+    filter_complex = "; ".join(filters)
+
+    # Output path
+    out_path = os.path.join(temp_dir, f"seg_{segment.track_name}_{segment.z_index}_{abs(hash((segment.start_time, segment.end_time))) & 0xFFFF:x}.mov")
+
+    # Assemble command
+    cmd: List[str] = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error']
+    _extend_ffmpeg_inputs(cmd, inputs)
+    cmd.extend([
+        '-filter_complex', filter_complex,
+        '-map', '[V]',
+        '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps),
+        out_path
+    ])
+
+    subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
+    return out_path
+
+
+def _concat_full_track(engine: VideoCompositionEngine, parts: List[str], temp_dir: str, track_key: str) -> str:
+    """Concatenate a list of clip paths into a single track video with alpha, enforcing fps/pix_fmt.
+    Uses concat filter for reliability (inputs must match geometry/fps/pix_fmt which we enforce on creation).
+    """
+    # If only one part, optionally normalize and return
+    if not parts:
+        # Produce a full-duration transparent track
+        return _transparent_clip(engine, engine.duration_seconds, temp_dir, f"track_{track_key}_empty")
+    if len(parts) == 1:
+        # Ensure output clip is present; still rewrap to normalize frame count exactly
+        single = parts[0]
+        out_path = os.path.join(temp_dir, f"track_{track_key}.mov")
+        cmd = [
+            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+            '-i', single,
+            '-vf', f"fps=fps={engine.fps},format=argb",
+            '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps),
+            out_path
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
+        return out_path
+
+    # Build concat filter over N inputs
+    in_cmd: List[str] = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error']
+    for p in parts:
+        in_cmd.extend(['-i', p])
+    n = len(parts)
+    # Normalize each input to exact fps/pix_fmt before concat to prevent black/opaque frames
+    norm_labels = []
+    filter_parts = []
+    for i in range(n):
+        norm = f"norm{i}"
+        filter_parts.append(f"[{i}:v]fps=fps={engine.fps},format=rgba[{norm}]")
+        norm_labels.append(f"[{norm}]")
+    # Concat, then force RGBA to preserve alpha in the concatenated output
+    filter_parts.append(''.join(norm_labels) + f"concat=n={n}:v=1:a=0[Vc]")
+    filter_parts.append("[Vc]format=rgba[V]")
+    filter_str = '; '.join(filter_parts)
+    out_path = os.path.join(temp_dir, f"track_{track_key}.mov")
+    in_cmd.extend(['-filter_complex', filter_str, '-map', '[V]', '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps), out_path])
+    subprocess.run(in_cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
+    return out_path
+
+
+def _build_visual_tracks(engine: VideoCompositionEngine, temp_dir: str) -> Tuple[Dict[str, str], List[Tuple[str, int]]]:
+    """Render visual segments per track into full-duration track videos with alpha.
+
+    Returns:
+      - track_name -> track_video_path
+      - ordered list of (track_name, render_index) to preserve overlay order
+    """
+    # Prepare text intermediate index mapping
+    ordered = sorted(engine.segments, key=lambda s: (s.render_index, s.z_index))
+    text_index = 0
+    text_map: Dict[int, Optional[str]] = {}
+    # If prerendered files exist, attach indices to segments and map index->path
+    text_files = getattr(engine, 'text_intermediate_files', None) or []
+    for seg in ordered:
+        if seg.track_type == 'text':
+            setattr(seg.segment_data, '_text_global_index', text_index)
+            text_map[text_index] = text_files[text_index] if text_index < len(text_files) else None
+            text_index += 1
+
+    # Group by track
+    from collections import defaultdict as _dd
+    by_track: Dict[str, Dict[str, Any]] = _dd(lambda: {'render_index': 0, 'track_type': '', 'segments': []})
+    for seg in ordered:
+        k = seg.track_name
+        if not by_track[k]['segments']:
+            by_track[k]['render_index'] = seg.render_index
+            by_track[k]['track_type'] = seg.track_type
+        by_track[k]['segments'].append(seg)
+
+    track_videos: Dict[str, str] = {}
+    order_list: List[Tuple[str, int]] = []
+
+    for track_name, info in by_track.items():
+        if info['track_type'] not in ['video', 'image', 'text']:
+            # Skip non-visual tracks
+            continue
+        order_list.append((track_name, info['render_index']))
+
+        # Build timeline with gaps
+        clips: List[str] = []
+        cursor = 0.0
+        for seg in info['segments']:
+            if seg.start_time > cursor + 1e-6:
+                # Insert transparent gap
+                gap_dur = seg.start_time - cursor
+                gap_path = _transparent_clip(engine, gap_dur, temp_dir, f"{track_name}_gap_{len(clips)}")
+                clips.append(gap_path)
+                cursor = seg.start_time
+
+            # Render/collect segment clip
+            clip_path = _render_visual_segment_clip(engine, seg, temp_dir, text_map)
+            if clip_path:
+                clips.append(clip_path)
+            cursor = max(cursor, seg.end_time)
+
+        # Trailing gap to full duration
+        if cursor < engine.duration_seconds - 1e-6:
+            tail_gap = _transparent_clip(engine, engine.duration_seconds - cursor, temp_dir, f"{track_name}_trail")
+            clips.append(tail_gap)
+
+        track_key = track_name.replace(' ', '_')
+        track_out = _concat_full_track(engine, clips, temp_dir, track_key)
+        track_videos[track_name] = track_out
+
+    # Overlay order by render_index asc
+    order_list.sort(key=lambda t: t[1])
+    return track_videos, order_list
+
+
+def _compose_final_from_tracks(engine: VideoCompositionEngine,
+                               track_videos: Dict[str, str],
+                               overlay_order: List[Tuple[str, int]],
+                               temp_dir: str,
+                               export_config: VideoExportConfig,
+                               output_path: str) -> None:
+    """Compose full-canvas track videos over a background and mix audio segments.
+
+    Reuses the existing audio graph builder to avoid regressions for audio behavior.
+    """
+    inputs: List[Union[str, List[str]]] = []
+
+    # Background (index 0). Round duration to whole frames
+    total_frames = int(round(engine.duration_seconds * float(engine.fps)))
+    total_duration = total_frames / float(engine.fps) if total_frames > 0 else 0.0
+    bg = f"color=c=black:size={engine.width}x{engine.height}:r={engine.fps}:d={total_duration}"
+    inputs.append(['-f', 'lavfi', '-i', bg])
+
+    # Track videos (indices 1..N)
+    ordered_tracks = [name for name, _ in overlay_order if name in track_videos]
+    for name in ordered_tracks:
+        inputs.append(track_videos[name])
+
+    # Build video overlay chain (normalize inputs to RGBA and consistent fps)
+    parts: List[str] = []
+    if len(ordered_tracks) == 0:
+        parts.append("[0:v]null[final_video]")
+    else:
+        # Begin with background
+        parts.append("[0:v]fps=fps={}:format=rgba[B]".format(engine.fps))
+        current = "[B]"
+        for i in range(len(ordered_tracks)):
+            # Normalize each track input prior to overlay
+            parts.append(f"[{i+1}:v]fps=fps={engine.fps},format=rgba[t{i+1}]")
+            parts.append(f"{current}[t{i+1}]overlay=0:0:eof_action=pass:format=auto[lay{i+1}]")
+            current = f"[lay{i+1}]"
+        parts.append(f"{current}format=rgba[final_video]")
+
+    # Audio: reuse existing audio graph builder
+    audio_segments = [s for s in engine.segments if s.track_type == 'audio']
+    audio_parts: List[str] = []
+    if audio_segments:
+        audio_parts = engine._build_audio_mix_graph(audio_segments, start_stream_index=1 + len(ordered_tracks), input_files=inputs)  # type: ignore[attr-defined]
+
+    video_fc = "; ".join(parts)
+    audio_fc = "; ".join(audio_parts) if audio_parts else ""
+    # Build and run final ffmpeg
+    cmd = _build_ffmpeg_cmd(inputs, video_fc, audio_fc, export_config, output_path)
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=temp_dir)
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg final compose failed (return code {result.returncode}): {result.stderr}")
+
 def export_to_video_impl(
     output_path: str,
     yaml_config: Optional[str] = None,
     draft_id: Optional[str] = None,
-    export_config: Optional[VideoExportConfig] = None
+    export_config: Optional[VideoExportConfig] = None,
+    use_multipass: bool = False
 ) -> Dict[str, Any]:
     """
     Export a CapCut draft to video using FFmpeg
@@ -1648,6 +1959,7 @@ def export_to_video_impl(
         yaml_config: Path to YAML config file or raw YAML content
         draft_id: ID of existing draft in cache
         export_config: Video export configuration
+        use_multipass: When True, use the multi-pass pipeline; when False, use legacy monolithic ffmpeg
 
     Returns:
         Dict with success status and metadata
@@ -1688,41 +2000,81 @@ def export_to_video_impl(
         with tempfile.TemporaryDirectory() as temp_dir:
             logger.info(f"Created temporary directory: {temp_dir}")
 
-            # Pre-render text segments to intermediates to reduce filter graph complexity
+            # Pre-render text segments to intermediates to reduce filter graph complexity (existing behavior)
             _attach_prerendered_text(engine, temp_dir, logger)
 
-            # Generate FFmpeg filter complex
-            filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
-            logger.info(f"Generated FFmpeg filter complex with {len(input_files)} inputs")
+            # Switch between multipass and legacy monolithic based on use_multipass flag
+            if use_multipass:
+                used_multipass = False
+                try:
+                    print("Multipass: building visual tracks…")
+                    track_videos, overlay_order = _build_visual_tracks(engine, temp_dir)
+                    print(f"Multipass: built {len(track_videos)} visual track(s)")
 
-            # Build FFmpeg command using modular helper
-            ffmpeg_cmd = _build_ffmpeg_cmd(
-                input_files=input_files,
-                filter_complex=filter_complex,
-                audio_filter_complex=audio_filter_complex,
-                export_config=export_config,
-                output_path=output_path,
-            )
+                    print("Multipass: composing final output from tracks…")
+                    _compose_final_from_tracks(
+                        engine=engine,
+                        track_videos=track_videos,
+                        overlay_order=overlay_order,
+                        temp_dir=temp_dir,
+                        export_config=export_config,
+                        output_path=output_path,
+                    )
+                    used_multipass = True
+                except Exception as mp_err:
+                    print(f"Warning: Multipass pipeline failed; falling back to monolithic ffmpeg. Reason: {mp_err}")
 
-            logger.info(f"Running FFmpeg command with {len(ffmpeg_cmd)} arguments")
-            logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+                if used_multipass:
+                    # Success path (multipass)
+                    print(f"Video export completed successfully: {output_path}")
+                    # Check output file
+                    if os.path.exists(output_path):
+                        file_size = os.path.getsize(output_path)
+                        print(f"Output file size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
+                    else:
+                        raise RuntimeError(f"Output file was not created: {output_path}")
+                    return {
+                        "success": True,
+                        "output_path": output_path,
+                        "duration": engine.duration_seconds,
+                        "width": engine.width,
+                        "height": engine.height,
+                        "fps": engine.fps,
+                        "file_size": file_size if 'file_size' in locals() else 0
+                    }
+            # Default/backup: monolithic single-command path
+                # Generate FFmpeg filter complex (original one-shot flow)
+                filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
+                logger.info(f"Generated FFmpeg filter complex with {len(input_files)} inputs")
 
-            # Execute FFmpeg
-            result = subprocess.run(
-                ffmpeg_cmd,
-                capture_output=True,
-                text=True,
-                cwd=temp_dir,
-                timeout=300  # 5 minute timeout
-            )
+                # Build FFmpeg command using modular helper
+                ffmpeg_cmd = _build_ffmpeg_cmd(
+                    input_files=input_files,
+                    filter_complex=filter_complex,
+                    audio_filter_complex=audio_filter_complex,
+                    export_config=export_config,
+                    output_path=output_path,
+                )
 
-            if result.returncode != 0:
-                logger.error(f"FFmpeg failed with return code {result.returncode}")
-                logger.error(f"FFmpeg stderr: {result.stderr}")
-                logger.error(f"FFmpeg stdout: {result.stdout}")
-                raise RuntimeError(f"FFmpeg export failed (return code {result.returncode}): {result.stderr}")
+                logger.info(f"Running FFmpeg command with {len(ffmpeg_cmd)} arguments")
+                logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
 
-            # Success path
+                # Execute FFmpeg
+                result = subprocess.run(
+                    ffmpeg_cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=temp_dir,
+                    timeout=300  # 5 minute timeout
+                )
+
+                if result.returncode != 0:
+                    logger.error(f"FFmpeg failed with return code {result.returncode}")
+                    logger.error(f"FFmpeg stderr: {result.stderr}")
+                    logger.error(f"FFmpeg stdout: {result.stdout}")
+                    raise RuntimeError(f"FFmpeg export failed (return code {result.returncode}): {result.stderr}")
+
+            # Success path (monolithic)
             logger.info(f"Video export completed successfully: {output_path}")
 
             # Check output file
@@ -1847,6 +2199,13 @@ Examples:
         help="Constant Rate Factor (default: '23')"
     )
 
+    # Multipass toggle
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy single-pass ffmpeg instead of multipass"
+    )
+
     # Logging options
     parser.add_argument(
         "--verbose", "-v",
@@ -1916,7 +2275,8 @@ def main():
             output_path=output_path,
             yaml_config=args.yaml_config,
             draft_id=args.draft_id,
-            export_config=export_config
+            export_config=export_config,
+            use_multipass=not args.legacy
         )
 
         if result["success"]:
