@@ -1650,8 +1650,8 @@ def _transparent_clip(engine: VideoCompositionEngine, duration: float, temp_dir:
     cmd = [
         'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', f"color=c=black@0:size={engine.width}x{engine.height}:r={engine.fps}:d={d_rounded}",
-        '-vf', f"fps=fps={engine.fps},format=argb",
-        '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps),
+        '-vf', f"fps=fps={engine.fps},format=yuva444p",
+        '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le', '-r', str(engine.fps),
         out_path
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
