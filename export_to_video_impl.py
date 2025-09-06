@@ -1948,7 +1948,8 @@ def export_to_video_impl(
     output_path: str,
     yaml_config: Optional[str] = None,
     draft_id: Optional[str] = None,
-    export_config: Optional[VideoExportConfig] = None
+    export_config: Optional[VideoExportConfig] = None,
+    use_multipass: bool = True
 ) -> Dict[str, Any]:
     """
     Export a CapCut draft to video using FFmpeg
@@ -1958,6 +1959,7 @@ def export_to_video_impl(
         yaml_config: Path to YAML config file or raw YAML content
         draft_id: ID of existing draft in cache
         export_config: Video export configuration
+        use_multipass: When True, use the multi-pass pipeline; when False, use legacy monolithic ffmpeg
 
     Returns:
         Dict with success status and metadata
@@ -2001,9 +2003,8 @@ def export_to_video_impl(
             # Pre-render text segments to intermediates to reduce filter graph complexity (existing behavior)
             _attach_prerendered_text(engine, temp_dir, logger)
 
-            # Enable multipass by default on this branch; allow forcing monolithic via env
-            force_mono = str(os.environ.get('CAPCUT_FORCE_MONO', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-            if not force_mono:
+            # Switch between multipass and legacy monolithic based on use_multipass flag
+            if use_multipass:
                 used_multipass = False
                 try:
                     logger.info("Multipass: building visual tracks…")
@@ -2199,6 +2200,13 @@ Examples:
         help="Constant Rate Factor (default: '23')"
     )
 
+    # Multipass toggle
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy single-pass ffmpeg instead of multipass"
+    )
+
     # Logging options
     parser.add_argument(
         "--verbose", "-v",
@@ -2268,7 +2276,8 @@ def main():
             output_path=output_path,
             yaml_config=args.yaml_config,
             draft_id=args.draft_id,
-            export_config=export_config
+            export_config=export_config,
+            use_multipass=not args.legacy
         )
 
         if result["success"]:
