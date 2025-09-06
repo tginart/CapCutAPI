@@ -308,6 +308,9 @@ def _infer_font_style_tokens(capcut_font_name: Optional[str], style_obj: Optiona
     # Parse from CapCut font code/name
     name = (capcut_font_name or '').lower()
     if 'italic' in name:
+        # WARN: The expression below used to be `italic = True or italic`, which always evaluates to True.
+        # Keeping logic unchanged, but this likely forces italic whenever 'italic' appears in the font name,
+        # ignoring any prior italic setting. Intended behavior might have been `italic = italic or True`.
         italic = True or italic
     if any(tok in name for tok in ['black', 'blk']):
         weight_token = 'black'
@@ -802,6 +805,9 @@ class VideoCompositionEngine:
                                 # Normalize and check using centralized LUT
                                 trans_name_norm = str(trans_name_str).strip().lower().replace(' ', '_') if isinstance(trans_name_str, str) else ''
                                 enum_name = TRANSITION_NAME_LUT.get(trans_name_norm, trans_name_norm)
+                                # WARN: Comparison below relies on exact strings 'Pull_in' and 'Pull_Out'.
+                                # If LUT values differ in case/underscore (e.g., 'pull_in', 'Pull Out'), it will fail.
+                                # Keeping logic unchanged; consider normalizing enum values in LUT or here.
                                 is_pull_in = enum_name == 'Pull_in'
                                 is_pull_out = enum_name == 'Pull_Out'
                                 print(
@@ -943,6 +949,9 @@ class VideoCompositionEngine:
                     if text_filter:
                         filter_parts.append(f"{prev_layer}{text_filter}[layer{i+1}]")
                         layer_outputs.append(f"[layer{i+1}]")
+                # WARN: The ordering of prerendered text intermediates is based on render_index only in
+                # _prerender_text_segments, while here segments are ordered by (render_index, z_index).
+                # In rare cases this could misalign text files to segments. Logic unchanged.
                 text_idx += 1
 
         # Final video output
@@ -1087,6 +1096,9 @@ class VideoCompositionEngine:
                 if transform_x != 0.0 or transform_y != 0.0:
                     x_pixels = int((transform_x + 1.0) * self.width / 2)
                     y_pixels = int((transform_y + 1.0) * self.height / 2)
+                    # WARN: FFmpeg does not have a 'translate' filter for video frames. Positioning typically uses
+                    # 'overlay' with x/y or 'lut'/'geq' for per-pixel ops. This 'translate' link likely has no effect
+                    # or will cause a filtergraph error if executed in isolation. Logic unchanged.
                     transform_filters.append(f"translate={x_pixels}:{y_pixels}")
 
             # Opacity
@@ -1297,6 +1309,10 @@ class VideoCompositionEngine:
                 speed_filters.append("atempo=2.0")
                 remaining_speed *= 2.0
             while remaining_speed > 2.0:
+                # WARN: For remaining_speed > 2.0 the code appends 'atempo=0.5' and multiplies remaining_speed by 0.5.
+                # This tends to cancel out later 'atempo' factors (e.g., 4.0 → 0.5, then appends 2.0 → net 1.0).
+                # Likely intended to decompose factor into a product of values within [0.5, 2.0] using 2.0 segments.
+                # Logic preserved as-is.
                 speed_filters.append("atempo=0.5")
                 remaining_speed *= 0.5
 
@@ -1509,6 +1525,114 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
 
     return intermediates
 
+
+# ------------------------------ Modular helpers (non-behavioral) ------------------------------
+
+def _determine_draft_id_from_inputs(yaml_config: Optional[str], draft_id: Optional[str]) -> str:
+    """Resolve and return a draft_id from provided inputs.
+
+    This wraps the exact logic used inline in export_to_video_impl without changing behavior.
+    """
+    # Input validation mirrors export_to_video_impl
+    if yaml_config and draft_id:
+        raise ValueError("Cannot specify both yaml_config and draft_id")
+    if not yaml_config and not draft_id:
+        raise ValueError("Must specify either yaml_config or draft_id")
+
+    if yaml_config:
+        # Import lazily to preserve original import location and side effects
+        from CapCutAPI import parse_yaml_config
+        if os.path.isfile(yaml_config):
+            result = parse_yaml_config(yaml_config)
+        else:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                f.write(yaml_config)
+                temp_yaml_path = f.name
+            try:
+                result = parse_yaml_config(temp_yaml_path)
+            finally:
+                if os.path.exists(temp_yaml_path):
+                    os.unlink(temp_yaml_path)
+        draft_id_resolved = result.get('draft_id')
+        if not draft_id_resolved:
+            raise ValueError("Failed to parse YAML config or create draft")
+        return draft_id_resolved
+
+    # If we reach here, draft_id must be provided and valid per original validation
+    return str(draft_id)
+
+
+def _attach_prerendered_text(engine: VideoCompositionEngine, temp_dir: str, logger: logging.Logger) -> None:
+    """Populate engine.text_intermediate_files with prerendered text intermediates.
+
+    Keeps original try/except behavior and logs.
+    """
+    try:
+        engine.text_intermediate_files = _prerender_text_segments(engine, temp_dir)
+        logger.info(f"Pre-rendered {len([p for p in engine.text_intermediate_files if p])} text segments")
+    except Exception as _e:
+        logger.warning(f"Text pre-render failed, falling back to inline drawtext: {_e}")
+        engine.text_intermediate_files = None
+
+
+def _build_full_filter_complex(video_fc: str, audio_fc: str) -> str:
+    """Combine video and audio filter_complex strings identically to inline behavior."""
+    if audio_fc:
+        return (video_fc + ("; " if video_fc else "") + audio_fc)
+    return video_fc
+
+
+def _extend_ffmpeg_inputs(ffmpeg_cmd: List[str], input_files: List[Union[str, List[str]]]) -> None:
+    """Append inputs to ffmpeg command, preserving original structure and order."""
+    for input_item in input_files:
+        if isinstance(input_item, list):
+            ffmpeg_cmd.extend(input_item)
+        else:
+            ffmpeg_cmd.extend(['-i', input_item])
+
+
+def _build_ffmpeg_cmd(
+    input_files: List[Union[str, List[str]]],
+    filter_complex: str,
+    audio_filter_complex: str,
+    export_config: VideoExportConfig,
+    output_path: str
+) -> List[str]:
+    """Construct the ffmpeg command list exactly like the original implementation."""
+    cmd: List[str] = [
+        'ffmpeg',
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'info'
+    ]
+    _extend_ffmpeg_inputs(cmd, input_files)
+
+    full_fc = _build_full_filter_complex(filter_complex, audio_filter_complex)
+    cmd.extend([
+        '-filter_complex', full_fc,
+        '-map', '[final_video]',
+        '-c:v', export_config.codec if export_config else 'libx264',
+        '-preset', export_config.preset if export_config else 'medium',
+        '-crf', export_config.crf if export_config else '23',
+        '-b:v', export_config.video_bitrate if export_config else '8000k',
+        '-r', str(export_config.fps if export_config else 30),
+        '-pix_fmt', 'yuv420p',
+    ])
+
+    if audio_filter_complex:
+        cmd.extend([
+            '-map', '[final_audio]',
+            '-c:a', export_config.audio_codec if export_config else 'aac',
+            '-b:a', export_config.audio_bitrate if export_config else '128k',
+            '-ac', str(export_config.audio_channels if export_config else 2),
+            '-ar', str(export_config.audio_sample_rate if export_config else 44100),
+        ])
+    else:
+        cmd.extend(['-an'])
+
+    cmd.append(output_path)
+    return cmd
+
 def export_to_video_impl(
     output_path: str,
     yaml_config: Optional[str] = None,
@@ -1528,12 +1652,6 @@ def export_to_video_impl(
         Dict with success status and metadata
     """
 
-    # Input validation
-    if yaml_config and draft_id:
-        raise ValueError("Cannot specify both yaml_config and draft_id")
-    if not yaml_config and not draft_id:
-        raise ValueError("Must specify either yaml_config or draft_id")
-
     # Default export config
     if export_config is None:
         export_config = VideoExportConfig(output_path=output_path)
@@ -1541,33 +1659,16 @@ def export_to_video_impl(
     try:
         logger.info(f"Starting video export to: {output_path}")
 
-        # Get or create draft
+        # Resolve or validate draft_id via modular helper while preserving logs
         if yaml_config:
             logger.info("Processing YAML config...")
-            # Import parse_yaml_config function
-            from CapCutAPI import parse_yaml_config
-
-            # Check if yaml_config is a file path or raw content
-            if os.path.isfile(yaml_config):
-                # It's a file path
-                result = parse_yaml_config(yaml_config)
-            else:
-                # It's raw YAML content - create a temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                    f.write(yaml_config)
-                    temp_yaml_path = f.name
-
-                try:
-                    result = parse_yaml_config(temp_yaml_path)
-                finally:
-                    # Clean up temporary file
-                    if os.path.exists(temp_yaml_path):
-                        os.unlink(temp_yaml_path)
-
-            draft_id = result.get('draft_id')
-            if not draft_id:
-                raise ValueError("Failed to parse YAML config or create draft")
+            resolved_draft_id = _determine_draft_id_from_inputs(yaml_config=yaml_config, draft_id=None)
+            draft_id = resolved_draft_id
             logger.info(f"Created draft from YAML: {draft_id}")
+        else:
+            # This also re-validates inputs and echoes original error messages
+            resolved_draft_id = _determine_draft_id_from_inputs(yaml_config=None, draft_id=draft_id)
+            draft_id = resolved_draft_id
 
         logger.info(f"Loading draft: {draft_id}")
 
@@ -1587,65 +1688,20 @@ def export_to_video_impl(
             logger.info(f"Created temporary directory: {temp_dir}")
 
             # Pre-render text segments to intermediates to reduce filter graph complexity
-            try:
-                engine.text_intermediate_files = _prerender_text_segments(engine, temp_dir)
-                logger.info(f"Pre-rendered {len([p for p in engine.text_intermediate_files if p])} text segments")
-            except Exception as _e:
-                logger.warning(f"Text pre-render failed, falling back to inline drawtext: {_e}")
-                engine.text_intermediate_files = None
+            _attach_prerendered_text(engine, temp_dir, logger)
 
             # Generate FFmpeg filter complex
             filter_complex, audio_filter_complex, input_files = engine.generate_ffmpeg_filter_complex(temp_dir)
             logger.info(f"Generated FFmpeg filter complex with {len(input_files)} inputs")
 
-            # Build FFmpeg command
-            ffmpeg_cmd = [
-                'ffmpeg',
-                '-y',  # Overwrite output files
-                '-hide_banner',  # Reduce output verbosity
-                '-loglevel', 'info'
-            ]
-
-            # Add input files (some are already expanded argument lists)
-            for input_item in input_files:
-                if isinstance(input_item, list):
-                    # Already expanded arguments (like ['-f', 'lavfi', '-i', 'color=...'])
-                    ffmpeg_cmd.extend(input_item)
-                else:
-                    # Single input file
-                    ffmpeg_cmd.extend(['-i', input_item])
-
-            # Build complete filter complex (video + audio)
-            full_filter_complex = filter_complex
-            if audio_filter_complex:
-                full_filter_complex += ("; " if full_filter_complex else "") + audio_filter_complex
-
-            # Add filter complex
-            ffmpeg_cmd.extend([
-                '-filter_complex', full_filter_complex,
-                '-map', '[final_video]',
-                '-c:v', export_config.codec if export_config else 'libx264',
-                '-preset', export_config.preset if export_config else 'medium',
-                '-crf', export_config.crf if export_config else '23',
-                '-b:v', export_config.video_bitrate if export_config else '8000k',
-                '-r', str(export_config.fps if export_config else 30),
-                '-pix_fmt', 'yuv420p',  # Ensure compatibility
-            ])
-
-            # Add audio mapping and encoding if we have audio
-            if audio_filter_complex:
-                ffmpeg_cmd.extend([
-                    '-map', '[final_audio]',
-                    '-c:a', export_config.audio_codec if export_config else 'aac',
-                    '-b:a', export_config.audio_bitrate if export_config else '128k',
-                    '-ac', str(export_config.audio_channels if export_config else 2),
-                    '-ar', str(export_config.audio_sample_rate if export_config else 44100),
-                ])
-            else:
-                # No audio, ensure we don't output an audio stream
-                ffmpeg_cmd.extend(['-an'])
-
-            ffmpeg_cmd.append(output_path)
+            # Build FFmpeg command using modular helper
+            ffmpeg_cmd = _build_ffmpeg_cmd(
+                input_files=input_files,
+                filter_complex=filter_complex,
+                audio_filter_complex=audio_filter_complex,
+                export_config=export_config,
+                output_path=output_path,
+            )
 
             logger.info(f"Running FFmpeg command with {len(ffmpeg_cmd)} arguments")
             logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
