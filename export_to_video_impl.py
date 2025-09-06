@@ -1643,14 +1643,18 @@ def _transparent_clip(engine: VideoCompositionEngine, duration: float, temp_dir:
     Uses a fast intra codec with alpha. Duration is clamped to non-negative.
     """
     d = max(0.0, float(duration))
+    # Round duration to whole frames to avoid off-by-one gaps
+    frame_count = int(round(d * float(engine.fps)))
+    d_rounded = frame_count / float(engine.fps) if frame_count > 0 else 0.0
     out_path = os.path.join(temp_dir, f"gap_{tag}_{abs(hash((tag, d))) & 0xFFFF:x}.mov")
     cmd = [
         'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', f"color=c=black@0:size={engine.width}x{engine.height}:r={engine.fps}:d={d}",
+        '-f', 'lavfi', '-i', f"color=c=black@0:size={engine.width}x{engine.height}:r={engine.fps}:d={d_rounded}",
+        '-vf', f"fps=fps={engine.fps},format=argb",
         '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps),
         out_path
     ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
     return out_path
 
 
@@ -1742,11 +1746,15 @@ def _render_visual_segment_clip(engine: VideoCompositionEngine, segment: Composi
         if spd and spd != 1.0:
             filters.append(f"[V1]setpts=PTS/{spd}[V1]")
 
+    # Normalize frame rate and pixel format for reliability
+    filters.append(f"[V1]fps=fps={engine.fps},format=argb[V1]")
+
     # Compute overlay coordinates
     ox, oy = engine._overlay_coords(segment)
 
-    # Compose on transparent canvas
-    filters.append(f"[0:v][V1]overlay=x={ox}-w/2:y={oy}-h/2:shortest=1:format=auto[V]")
+    # Compose on transparent canvas without premature termination
+    # use eof_action=pass so the base continues and avoid black flashes at segment edges
+    filters.append(f"[0:v][V1]overlay=x={ox}-w/2:y={oy}-h/2:eof_action=pass:format=auto[V]")
 
     filter_complex = "; ".join(filters)
 
@@ -1776,12 +1784,13 @@ def _concat_full_track(engine: VideoCompositionEngine, parts: List[str], temp_di
         # Produce a full-duration transparent track
         return _transparent_clip(engine, engine.duration_seconds, temp_dir, f"track_{track_key}_empty")
     if len(parts) == 1:
-        # Ensure output clip is present; still rewrap to normalize if needed
+        # Ensure output clip is present; still rewrap to normalize frame count exactly
         single = parts[0]
         out_path = os.path.join(temp_dir, f"track_{track_key}.mov")
         cmd = [
             'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
             '-i', single,
+            '-vf', f"fps=fps={engine.fps},format=argb",
             '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps),
             out_path
         ]
@@ -1793,7 +1802,15 @@ def _concat_full_track(engine: VideoCompositionEngine, parts: List[str], temp_di
     for p in parts:
         in_cmd.extend(['-i', p])
     n = len(parts)
-    filter_str = ''.join(f"[{i}:v]" for i in range(n)) + f"concat=n={n}:v=1:a=0[V]"
+    # Normalize each input to exact fps/pix_fmt before concat to prevent black frames
+    norm_labels = []
+    filter_parts = []
+    for i in range(n):
+        norm = f"norm{i}"
+        filter_parts.append(f"[{i}:v]fps=fps={engine.fps},format=argb[{norm}]")
+        norm_labels.append(f"[{norm}]")
+    filter_parts.append(''.join(norm_labels) + f"concat=n={n}:v=1:a=0[V]")
+    filter_str = '; '.join(filter_parts)
     out_path = os.path.join(temp_dir, f"track_{track_key}.mov")
     in_cmd.extend(['-filter_complex', filter_str, '-map', '[V]', '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps), out_path])
     subprocess.run(in_cmd, check=True, capture_output=True, text=True, cwd=temp_dir)
@@ -1881,8 +1898,10 @@ def _compose_final_from_tracks(engine: VideoCompositionEngine,
     """
     inputs: List[Union[str, List[str]]] = []
 
-    # Background (index 0)
-    bg = f"color=c=black:size={engine.width}x{engine.height}:r={engine.fps}:d={engine.duration_seconds}"
+    # Background (index 0). Round duration to whole frames
+    total_frames = int(round(engine.duration_seconds * float(engine.fps)))
+    total_duration = total_frames / float(engine.fps) if total_frames > 0 else 0.0
+    bg = f"color=c=black:size={engine.width}x{engine.height}:r={engine.fps}:d={total_duration}"
     inputs.append(['-f', 'lavfi', '-i', bg])
 
     # Track videos (indices 1..N)
@@ -1898,7 +1917,9 @@ def _compose_final_from_tracks(engine: VideoCompositionEngine,
         # Begin with background
         current = "[0:v]"
         for i in range(len(ordered_tracks)):
-            parts.append(f"{current}[{i+1}:v]overlay=0:0[lay{i+1}]")
+            # Normalize each track input prior to overlay
+            parts.append(f"[{i+1}:v]fps=fps={engine.fps},format=argb[t{i+1}]")
+            parts.append(f"{current}[t{i+1}]overlay=0:0:eof_action=pass[lay{i+1}]")
             current = f"[lay{i+1}]"
         parts.append(f"{current}null[final_video]")
 
@@ -1973,12 +1994,12 @@ def export_to_video_impl(
             # Pre-render text segments to intermediates to reduce filter graph complexity (existing behavior)
             _attach_prerendered_text(engine, temp_dir, logger)
 
-            # Gate multipass behind environment variable to avoid regressions by default
-            use_multipass = str(os.environ.get('CAPCUT_USE_MULTIPASS', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
-            if use_multipass:
+            # Enable multipass by default on this branch; allow forcing monolithic via env
+            force_mono = str(os.environ.get('CAPCUT_FORCE_MONO', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+            if not force_mono:
                 used_multipass = False
                 try:
-                    logger.info("Multipass enabled: building visual tracks…")
+                    logger.info("Multipass: building visual tracks…")
                     track_videos, overlay_order = _build_visual_tracks(engine, temp_dir)
                     logger.info(f"Multipass: built {len(track_videos)} visual track(s)")
 
