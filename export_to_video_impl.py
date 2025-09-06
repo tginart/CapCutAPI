@@ -1746,15 +1746,19 @@ def _render_visual_segment_clip(engine: VideoCompositionEngine, segment: Composi
         if spd and spd != 1.0:
             filters.append(f"[V1]setpts=PTS/{spd}[V1]")
 
-    # Normalize frame rate and pixel format for reliability
-    filters.append(f"[V1]fps=fps={engine.fps},format=argb[V1]")
+    # Normalize frame rate and ensure RGBA (with alpha) prior to overlay
+    filters.append(f"[V1]fps=fps={engine.fps},format=rgba[V1]")
+
+    # Ensure base canvas carries alpha so output preserves transparency
+    filters.append("[0:v]format=rgba[B0]")
 
     # Compute overlay coordinates
     ox, oy = engine._overlay_coords(segment)
 
     # Compose on transparent canvas without premature termination
-    # use eof_action=pass so the base continues and avoid black flashes at segment edges
-    filters.append(f"[0:v][V1]overlay=x={ox}-w/2:y={oy}-h/2:eof_action=pass:format=auto[V]")
+    # use eof_action=pass so the base continues; force RGBA output to preserve alpha outside the drawn region
+    filters.append(f"[B0][V1]overlay=x={ox}-w/2:y={oy}-h/2:eof_action=pass:format=auto[V]")
+    filters.append("[V]format=rgba[V]")
 
     filter_complex = "; ".join(filters)
 
@@ -1802,14 +1806,16 @@ def _concat_full_track(engine: VideoCompositionEngine, parts: List[str], temp_di
     for p in parts:
         in_cmd.extend(['-i', p])
     n = len(parts)
-    # Normalize each input to exact fps/pix_fmt before concat to prevent black frames
+    # Normalize each input to exact fps/pix_fmt before concat to prevent black/opaque frames
     norm_labels = []
     filter_parts = []
     for i in range(n):
         norm = f"norm{i}"
-        filter_parts.append(f"[{i}:v]fps=fps={engine.fps},format=argb[{norm}]")
+        filter_parts.append(f"[{i}:v]fps=fps={engine.fps},format=rgba[{norm}]")
         norm_labels.append(f"[{norm}]")
-    filter_parts.append(''.join(norm_labels) + f"concat=n={n}:v=1:a=0[V]")
+    # Concat, then force RGBA to preserve alpha in the concatenated output
+    filter_parts.append(''.join(norm_labels) + f"concat=n={n}:v=1:a=0[Vc]")
+    filter_parts.append("[Vc]format=rgba[V]")
     filter_str = '; '.join(filter_parts)
     out_path = os.path.join(temp_dir, f"track_{track_key}.mov")
     in_cmd.extend(['-filter_complex', filter_str, '-map', '[V]', '-c:v', 'qtrle', '-pix_fmt', 'argb', '-r', str(engine.fps), out_path])
@@ -1909,19 +1915,20 @@ def _compose_final_from_tracks(engine: VideoCompositionEngine,
     for name in ordered_tracks:
         inputs.append(track_videos[name])
 
-    # Build video overlay chain
+    # Build video overlay chain (normalize inputs to RGBA and consistent fps)
     parts: List[str] = []
     if len(ordered_tracks) == 0:
         parts.append("[0:v]null[final_video]")
     else:
         # Begin with background
-        current = "[0:v]"
+        parts.append("[0:v]fps=fps={}:format=rgba[B]".format(engine.fps))
+        current = "[B]"
         for i in range(len(ordered_tracks)):
             # Normalize each track input prior to overlay
-            parts.append(f"[{i+1}:v]fps=fps={engine.fps},format=argb[t{i+1}]")
-            parts.append(f"{current}[t{i+1}]overlay=0:0:eof_action=pass[lay{i+1}]")
+            parts.append(f"[{i+1}:v]fps=fps={engine.fps},format=rgba[t{i+1}]")
+            parts.append(f"{current}[t{i+1}]overlay=0:0:eof_action=pass:format=auto[lay{i+1}]")
             current = f"[lay{i+1}]"
-        parts.append(f"{current}null[final_video]")
+        parts.append(f"{current}format=rgba[final_video]")
 
     # Audio: reuse existing audio graph builder
     audio_segments = [s for s in engine.segments if s.track_type == 'audio']
