@@ -1385,9 +1385,10 @@ def _prerender_text_segments(engine: VideoCompositionEngine, temp_dir: str) -> L
     Timing is applied at final overlay stage, not inside the prerender.
     Returns a list of file paths (or None) aligned with the order of text segments in generate_ffmpeg_filter_complex.
     """
-    # Collect text segments in the same order used in generate_ffmpeg_filter_complex
-    sorted_segments = sorted(engine.segments, key=lambda s: s.render_index)
-    text_segments = [s for s in sorted_segments if s.track_type == 'text']
+    # Collect text segments in the exact same order used in generate_ffmpeg_filter_complex
+    # to ensure indices align when consuming intermediates during overlay.
+    ordered_segments = sorted(engine.segments, key=lambda s: (s.render_index, s.z_index))
+    text_segments = [s for s in ordered_segments if s.track_type == 'text']
 
     intermediates: List[Optional[str]] = []
     for idx, segment in enumerate(text_segments):
