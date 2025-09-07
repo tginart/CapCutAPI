@@ -244,7 +244,8 @@ TRANSITION_NAME_LUT = {
     # Pull In/Out variations
     'pull_in': 'Pull_in',
     'pullin': 'Pull_in',
-    'pull_in': 'Pull_in',
+    'pull-in': 'Pull_in',
+    'pull in': 'Pull_in',
 
     # Common transitions
     'dissolve': 'Dissolve',
