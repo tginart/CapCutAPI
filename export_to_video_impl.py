@@ -214,22 +214,8 @@ from pyJianYingDraft.metadata.capcut_transition_meta import TRANSITION_NAME_LUT
 # Setup logging
 logger = logging.getLogger(__name__)
 
-# Feature flags
-# Guard experimental transition processing behind a runtime flag to avoid regressions
-NEW_CODE_PATH_TRANSITIONS: bool = True
-# When using the new path, optionally force a simpler manual Pull-In (fade crossfade)
-# to help debug and avoid black padding from zoom transitions.
-NEW_TRANSITIONS_MANUAL_PULL_IN: bool = False
-
-# Debug-only experimental toggles. Keep False to preserve existing behavior.
-# When enabled, we explicitly split video pads used in both overlay and transition
-# branches to avoid filtergraph fan-out issues, and we clamp transition duration
-# by one frame to reduce off-by-one empty trims.
-DEBUG_TRANSITIONS_EXPERIMENTAL: bool = True
-DEBUG_TRANSITIONS_SIMPLE_XFADE: bool = True
-
-# Production: prefer robust direct-clip xfade for Pull In/Out
-TRANSITIONS_USE_SIMPLE_XFADE: bool = True
+# Debug flag: when True, prints extra logs and keeps additional safety options
+DEBUG_EXPORTER: bool = False
 
 # Optional font support via pyfonts
 try:
@@ -717,20 +703,16 @@ class VideoCompositionEngine:
                             filter_parts.append(video_filter)
                             # Shift segment into global timeline by adding a constant PTS offset
                             start = segment.start_time
-                            # In debug mode, split the per-segment stream for safe reuse in
-                            # the overlay branch and the transition branch separately.
-                            if DEBUG_TRANSITIONS_EXPERIMENTAL:
-                                filter_parts.append(f"[v{i}]split=2[v{i}_ov][v{i}_xf]")
-                                overlay_src = f"[v{i}_ov]"
-                            else:
-                                overlay_src = f"[v{i}]"
+                            # Split per-segment stream for safe reuse in overlay and transition branches
+                            filter_parts.append(f"[v{i}]split=2[v{i}_ov][v{i}_xf]")
+                            overlay_src = f"[v{i}_ov]"
                             filter_parts.append(f"{overlay_src}setpts=PTS+{start}/TB[v{i}_ts]")
                             prev_layer = layer_outputs[-1]
                             ox, oy = self._overlay_coords(segment)
                             end = segment.end_time
                             # Overlay with enable between start and end, aligning center to (ox,oy)
                             # In debug mode, add shortest/eof_action to avoid stalls if a branch ends early
-                            overlay_opts = ":shortest=1:eof_action=pass" if DEBUG_TRANSITIONS_EXPERIMENTAL else ""
+                            overlay_opts = ":shortest=1:eof_action=pass" if DEBUG_EXPORTER else ""
                             filter_parts.append(
                                 f"{prev_layer}[v{i}_ts]overlay={ox}-w/2:{oy}-h/2:enable='between(t\\,{start}\\,{end})'{overlay_opts}[layer{i+1}]"
                             )
@@ -839,18 +821,16 @@ class VideoCompositionEngine:
                                 is_pull_in = enum_norm == 'pull_in'
                                 is_pull_out = enum_norm == 'pull_out'
 
-                                # If a transition was requested but is not supported by the custom exporter, raise loudly
-                                # ONLY when the new code path is enabled; otherwise keep legacy behavior (ignore unsupported).
-                                if NEW_CODE_PATH_TRANSITIONS:
-                                    has_transition = bool(trans_name_str) or bool(
-                                        getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
-                                        or getattr(getattr(segment, 'segment_data', None), 'transition', None)
+                                # Validate supported transitions (Pull_in, Black_Fade/Dissolve, Pull_out)
+                                has_transition = bool(trans_name_str) or bool(
+                                    getattr(getattr(prev_seg, 'segment_data', None), 'transition', None)
+                                    or getattr(getattr(segment, 'segment_data', None), 'transition', None)
+                                )
+                                if has_transition and not (is_pull_in or is_pull_out or enum_norm in ('black_fade', 'dissolve', 'fade')):
+                                    raise ValueError(
+                                        f"Unsupported transition for custom exporter: raw='{trans_name_str}' normalized='{trans_name_norm}' "
+                                        f"resolved='{enum_name}'. Supported: Pull in, Pull out, Black_Fade/Dissolve."
                                     )
-                                    if has_transition and not is_pull_in:
-                                        raise ValueError(
-                                            f"Unsupported transition for custom exporter: raw='{trans_name_str}' normalized='{trans_name_norm}' "
-                                            f"resolved='{enum_name}'. Only 'Pull in' is supported currently."
-                                        )
 
                                 print(
                                     f"[XFADE] track='{segment.track_name}' prev_idx={prev_loop_index} curr_idx={i} "
@@ -861,7 +841,7 @@ class VideoCompositionEngine:
                                 # Only when clips butt-join to avoid gaps
                                 joins_cleanly = abs(prev_seg.end_time - segment.start_time) < 1e-4
 
-                                if (is_pull_in or is_pull_out) and joins_cleanly and isinstance(trans_dur_sec, (int, float)) and trans_dur_sec > 0:
+                                if (is_pull_in or enum_norm in ('black_fade', 'dissolve', 'fade') or is_pull_out) and joins_cleanly and isinstance(trans_dur_sec, (int, float)) and trans_dur_sec > 0:
                                     # Clamp overlap to available tails/heads (after speed)
                                     prev_speed_obj = getattr(prev_seg.segment_data, 'speed', None)
                                     prev_speed_factor = getattr(prev_speed_obj, 'speed', 1.0) if prev_speed_obj is not None else 1.0
@@ -876,16 +856,16 @@ class VideoCompositionEngine:
 
                                     d = float(trans_dur_sec)
                                     d = max(0.0, min(d, eff_duration_prev, eff_duration_curr))
-                                    # In debug mode, shave one frame to avoid endpoint rounding producing empty trims
+                                    # Debug: shave one frame to avoid endpoint rounding producing empty trims
                                     d_eff = d
-                                    if DEBUG_TRANSITIONS_EXPERIMENTAL:
+                                    if DEBUG_EXPORTER:
                                         d_eff = max(0.0, d - (1.0 / float(self.fps)))
                                     print(
                                         f"[XFADE] Using transition enum='{enum_name}' duration={d:.3f}s (requested={trans_dur_sec}) "
                                         f"prev_eff={eff_duration_prev:.3f}s curr_eff={eff_duration_curr:.3f}s join_ok={joins_cleanly}"
                                     )
 
-                                    if (d_eff if DEBUG_TRANSITIONS_EXPERIMENTAL else d) > 1e-3:
+                                    if (d_eff if DEBUG_EXPORTER else d) > 1e-3:
                                         # Labels for tails/heads and transition
                                         a_tail = f"v{prev_loop_index}_tail"
                                         b_head = f"v{i}_head"
@@ -893,88 +873,43 @@ class VideoCompositionEngine:
 
                                         # Trim last d seconds of A (prev) and first d seconds of B (curr)
                                         # Both [vX] streams already include base transforms and speed effects
-                                        d_used = d_eff if DEBUG_TRANSITIONS_EXPERIMENTAL else d
+                                        d_used = d_eff if DEBUG_EXPORTER else d
                                         print(f"[XFADE][DBG] Trim A tail: [v{prev_loop_index}] -> [{a_tail}] range=({eff_duration_prev - d_used:.3f},{eff_duration_prev:.3f})s")
                                         print(f"[XFADE][DBG] Trim B head: [v{i}] -> [{b_head}] range=(0.000,{d_used:.3f})s")
-                                        # Choose trim sources; in debug, use split branches reserved for transitions
-                                        prev_src = f"v{prev_loop_index}_xf" if DEBUG_TRANSITIONS_EXPERIMENTAL else f"v{prev_loop_index}"
-                                        curr_src = f"v{i}_xf" if DEBUG_TRANSITIONS_EXPERIMENTAL else f"v{i}"
+                                        # Use split branches reserved for transitions
+                                        prev_src = f"v{prev_loop_index}_xf"
+                                        curr_src = f"v{i}_xf"
                                         filter_parts.append(f"[{prev_src}]trim={eff_duration_prev - d_used}:{eff_duration_prev},setpts=PTS-STARTPTS[{a_tail}]")
                                         filter_parts.append(f"[{curr_src}]trim=0:{d_used},setpts=PTS-STARTPTS[{b_head}]")
 
                                         # Determine window [t0, startB]
                                         t0 = max(0.0, segment.start_time - d_used)
                                         
-                                        # Split current composed base into two window copies and a carry stream
-                                        # Decide implementation strategy
-                                        if (DEBUG_TRANSITIONS_EXPERIMENTAL and DEBUG_TRANSITIONS_SIMPLE_XFADE) or TRANSITIONS_USE_SIMPLE_XFADE:
-                                            # Simple path: xfade directly between trimmed tails/heads
-                                            A_full_cfr = f"v{prev_loop_index}_{i}_A_cfr"
-                                            B_full_cfr = f"v{prev_loop_index}_{i}_B_cfr"
-                                            filter_parts.append(f"[{a_tail}]fps=fps={self.fps},format=yuv420p[{A_full_cfr}]")
-                                            filter_parts.append(f"[{b_head}]fps=fps={self.fps},format=yuv420p[{B_full_cfr}]")
-                                            # For overlay later, we still need a carry stream from the composed base
-                                            carry = f"v{prev_loop_index}_{i}_carry"
-                                            prev_layer_after_b = layer_outputs[-1]
-                                            print(f"[XFADE][DBG] SimpleXfade carry source: {prev_layer_after_b}")
-                                            filter_parts.append(f"{prev_layer_after_b}split=1[{carry}]")
-                                        else:
-                                            # Original method: build full-frame windows from the composed base
-                                            baseA = f"v{prev_loop_index}_{i}_baseA"
-                                            baseB = f"v{prev_loop_index}_{i}_baseB"
-                                            carry = f"v{prev_loop_index}_{i}_carry"
-                                            prev_layer_after_b = layer_outputs[-1]
-                                            print(f"[XFADE][DBG] Base split source: {prev_layer_after_b}")
-                                            filter_parts.append(f"{prev_layer_after_b}split=3[{baseA}][{baseB}][{carry}]")
-
-                                            # Trim each base copy to the transition window and reset PTS
-                                            baseA_w = f"v{prev_loop_index}_{i}_baseA_w"
-                                            baseB_w = f"v{prev_loop_index}_{i}_baseB_w"
-                                            filter_parts.append(f"[{baseA}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseA_w}]")
-                                            filter_parts.append(f"[{baseB}]trim={t0}:{segment.start_time},setpts=PTS-STARTPTS[{baseB_w}]")
-
-                                            # Overlay the trimmed tails/heads onto the windowed base copies to get full frames
-                                            ox_prev, oy_prev = self._overlay_coords(prev_seg)
-                                            ox_curr, oy_curr = self._overlay_coords(segment)
-                                            A_full = f"v{prev_loop_index}_{i}_A_full"
-                                            B_full = f"v{prev_loop_index}_{i}_B_full"
-                                            filter_parts.append(f"[{baseA_w}][{a_tail}]overlay={ox_prev}-w/2:{oy_prev}-h/2[{A_full}]")
-                                            filter_parts.append(f"[{baseB_w}][{b_head}]overlay={ox_curr}-w/2:{oy_curr}-h/2[{B_full}]")
-
-                                            # Normalize to constant frame rate and pixel format for xfade stability
-                                            A_full_cfr = f"v{prev_loop_index}_{i}_A_full_cfr"
-                                            B_full_cfr = f"v{prev_loop_index}_{i}_B_full_cfr"
-                                            filter_parts.append(f"[{A_full}]fps=fps={self.fps},format=yuv420p[{A_full_cfr}]")
-                                            filter_parts.append(f"[{B_full}]fps=fps={self.fps},format=yuv420p[{B_full_cfr}]")
+                                        # Simple path: xfade directly between trimmed tails/heads
+                                        A_full_cfr = f"v{prev_loop_index}_{i}_A_cfr"
+                                        B_full_cfr = f"v{prev_loop_index}_{i}_B_cfr"
+                                        filter_parts.append(f"[{a_tail}]fps=fps={self.fps},format=yuv420p[{A_full_cfr}]")
+                                        filter_parts.append(f"[{b_head}]fps=fps={self.fps},format=yuv420p[{B_full_cfr}]")
+                                        # For overlay later, we still need a carry stream from the composed base
+                                        carry = f"v{prev_loop_index}_{i}_carry"
+                                        prev_layer_after_b = layer_outputs[-1]
+                                        print(f"[XFADE][DBG] SimpleXfade carry source: {prev_layer_after_b}")
+                                        filter_parts.append(f"{prev_layer_after_b}split=1[{carry}]")
 
                                         # Choose implementation and build transition between full frames
-                                        if NEW_CODE_PATH_TRANSITIONS and NEW_TRANSITIONS_MANUAL_PULL_IN and is_pull_in:
-                                            xfade_type = 'fade'
-                                            print(f"[XFADE][DBG] Using MANUAL Pull-In via xfade='{xfade_type}' (no zoom)")
-                                            filter_parts.append(f"[{A_full_cfr}][{B_full_cfr}]xfade=transition={xfade_type}:duration={(d_used if DEBUG_TRANSITIONS_EXPERIMENTAL else d)}:offset=0[{trans_label}]")
-                                        else:
-                                            xfade_type = 'zoomin' if is_pull_in else 'zoomout'
-                                            filter_parts.append(f"[{A_full_cfr}][{B_full_cfr}]xfade=transition={xfade_type}:duration={(d_used if DEBUG_TRANSITIONS_EXPERIMENTAL else d)}:offset=0[{trans_label}]")
-                                            print(
-                                                f"[XFADE] Built full-frame xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={(d_used if DEBUG_TRANSITIONS_EXPERIMENTAL else d):.3f}s"
-                                            )
+                                        xfade_type = 'fade' if enum_norm in ('black_fade', 'dissolve', 'fade') else ('zoomin' if is_pull_in else 'zoomout')
+                                        filter_parts.append(f"[{A_full_cfr}][{B_full_cfr}]xfade=transition={xfade_type}:duration={(d_used if DEBUG_EXPORTER else d)}:offset=0[{trans_label}]")
+                                        print(
+                                            f"[XFADE] Built full-frame xfade type='{xfade_type}' between idx {prev_loop_index}->{i} over d={(d_used if DEBUG_EXPORTER else d):.3f}s"
+                                        )
 
-                                        if NEW_CODE_PATH_TRANSITIONS:
-                                            # New path: use the full-frame xfade directly (no chroma key), replacing base during window
-                                            print(f"[XFADE][DBG] NEW overlay: carry + trans during [{t0:.3f},{segment.start_time:.3f}]s")
-                                            filter_parts.append(f"[{trans_label}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
-                                            overlay_opts2 = ":shortest=1:eof_action=pass" if DEBUG_TRANSITIONS_EXPERIMENTAL else ""
-                                            filter_parts.append(
-                                                f"[{carry}][{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'{overlay_opts2}[layer{i+1}_tr]"
-                                            )
-                                        else:
-                                            # Legacy path: remove black fill by keying out near-black to create alpha, then overlay
-                                            trans_label_ck = f"{trans_label}_ck"
-                                            filter_parts.append(f"[{trans_label}]format=rgba,chromakey=0x000000:0.02:0.0[{trans_label_ck}]")
-                                            filter_parts.append(f"[{trans_label_ck}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
-                                            filter_parts.append(
-                                                f"[{carry}][{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'[layer{i+1}_tr]"
-                                            )
+                                        # Use the full-frame xfade directly, replacing base during window
+                                        print(f"[XFADE][DBG] NEW overlay: carry + trans during [{t0:.3f},{segment.start_time:.3f}]s")
+                                        filter_parts.append(f"[{trans_label}]setpts=PTS+{t0}/TB[{trans_label}_ts]")
+                                        overlay_opts2 = ":shortest=1:eof_action=pass" if DEBUG_EXPORTER else ""
+                                        filter_parts.append(
+                                            f"[{carry}][{trans_label}_ts]overlay=0:0:enable='between(t\\,{t0}\\,{segment.start_time})'{overlay_opts2}[layer{i+1}_tr]"
+                                        )
                                         print(
                                             f"[XFADE] Overlaying transition window [{t0:.3f}, {segment.start_time:.3f}]s on track='{segment.track_name}'"
                                         )

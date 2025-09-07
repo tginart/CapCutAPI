@@ -269,9 +269,9 @@ TRANSITION_NAME_LUT = {
 SUPPORTED_IN_CUSTOM_EXPORTER = {
     # Implemented transitions
     'Pull_in': True,
-    # ONLY pull in/out transitions are supported in the custom exporter
-    # 'Dissolve': True,
-    # 'Black_Fade': True,
+    # Also support a simple crossfade between clips
+    'Black_Fade': True,
+    'Dissolve': True,
     # 'Wipe_Left': True,
     # 'Wipe_Right': True,
     # 'Wipe_Up': True,
