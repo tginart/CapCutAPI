@@ -123,6 +123,7 @@ steps:
 - Key notes:
   - If neither `end` nor `duration` is provided, the true duration is backfilled during save
   - `video_url` accepts both remote URLs (e.g., `https://...`) and local file paths (e.g., `/path/to/video.mp4` or `file:///path/to/video.mov`); local supports `.mp4` and `.mov` only
+  - Transition semantics: A transition attaches to the end of the segment and blends into the next segment on the same video track. To achieve A→B, set `transition` on A. If there is no immediately adjacent next segment on that track (or there is a gap), the transition has no effect. Transitions do not cross tracks.
   - **CRITICAL**: You CANNOT have *temporally* overlapping segments on the same track name! Use different `track_name` values for simultaneous or layered content (e.g., "main", "main2", "overlay"). Of course, you can re-use the same track name for content that does NOT overlap in time.
 - Example:
 ```yaml
@@ -208,6 +209,7 @@ steps:
 - Key notes:
   - Ensure `end > start`; duration is `end - start`
   - Animation, transition, and mask names must match environment enums
+  - Transition semantics: A transition attaches to the end of the segment and blends into the next segment on the same video track. To achieve A→B, set `transition` on A. If there is no immediately adjacent next segment on that track (or there is a gap), the transition has no effect. Transitions do not cross tracks.
   - **CRITICAL**: You CANNOT have temporally overlapping segments on the same track name! Use different `track_name` values for simultaneous images. Of course, you can re-use the same track name for content that does NOT overlap in time.
 - Example:
 ```yaml
@@ -456,5 +458,3 @@ steps:
     times: [0, 2, 4]
     values: ["1.0", "1.2", "0.8"]
 ```
-
-

@@ -55,6 +55,8 @@ SUPPORTED OPERATIONS:
   - Position control (transform_x, transform_y)
   - Timing control (start/end)
   - Basic styling (font, color, alpha)
+  - Font family selection (Google Fonts integration)
+  - Text backgrounds (alpha transparency, hex colors)
 
 ✓ add_sticker:
   - Basic placeholder support
@@ -69,6 +71,8 @@ SUPPORTED OPERATIONS:
 ✓ add_audio:
   - Audio clips with source/target timing
   - Volume control and speed effects
+  - Complex speed effects (atempo chaining for wide range)
+  - Audio delay/timing synchronization
   - Multiple audio track mixing
   - AAC encoding with configurable settings
 
@@ -78,7 +82,10 @@ SUPPORTED FEATURES:
 ✓ Complex timing synchronization across tracks
 ✓ Video transformations (scale, position, rotation, opacity)
 ✓ Audio track mixing and synchronization
-✓ Text overlay rendering with basic styling
+✓ Advanced audio processing (speed effects, volume control, timing)
+✓ Text overlay rendering with font family support
+✓ Text backgrounds with alpha transparency
+✓ Smooth transitions (Pull In/Out, Fade/Dissolve)
 ✓ FFmpeg filter graph generation for professional compositing
 ✓ Configurable output settings (resolution, FPS, bitrate, audio)
 ✓ Progress logging and error handling
@@ -98,10 +105,10 @@ VIDEO EFFECTS & FILTERS:
 
 TRANSITIONS:
 ~~~~~~~~~~~
-✗ Smooth transitions between segments
-✗ Transition duration and easing
-✗ Transition effects (dissolve, wipe, etc.)
-✗ Custom transition curves
+✓ Smooth transitions between segments (Pull In/Out, Fade/Dissolve)
+✓ Transition duration and timing control
+✓ Transition effects (zoomin, zoomout, fade via FFmpeg xfade)
+✗ Custom transition curves (limited to supported FFmpeg transitions)
 
 ANIMATIONS:
 ~~~~~~~~~~~
@@ -119,11 +126,13 @@ STICKER SYSTEM:
 
 TEXT ADVANCED FEATURES:
 ~~~~~~~~~~~~~~~~~~~~~~~
+✓ Font family selection (Google Fonts integration via pyfonts)
+✓ Font weight inference (regular, bold, black, etc.)
+✓ Font style detection (italic support)
+✓ Text background/bubble effects (alpha transparency, hex colors)
 ✗ Rich text formatting (bold, italic, underline)
 ✗ Multi-style text ranges
 ✗ Text shadows and outlines
-✗ Text background/bubble effects
-✗ Font family selection
 ✗ Text animations and keyframes
 
 KEYFRAME SYSTEM:
@@ -159,6 +168,7 @@ DEPENDENCIES:
 - FFmpeg must be installed and available in PATH
 - All CapCutAPI dependencies
 - Python 3.7+
+- pyfonts (optional, for Google Fonts integration)
 - Remote assets must be accessible via URL
 
 USAGE PATTERNS:
@@ -180,14 +190,14 @@ FUTURE ENHANCEMENT POSSIBILITIES:
 1. Advanced video effects mapping
 2. Keyframe animation system
 3. Real sticker asset support
-4. Transition effects engine
-5. Audio fade in/out effects
+4. Additional transition effects (wipe, custom curves)
+5. Audio fade in/out effects (volume envelopes)
 6. Background music mixing enhancements
 7. GPU acceleration support
 8. Streaming processing for large projects
 9. Multi-format export support
 10. Real-time preview generation
-11. Advanced text rendering with rich formatting
+11. Advanced text rendering with rich formatting (bold, italic, underline)
 
 ===============================================================================
 """

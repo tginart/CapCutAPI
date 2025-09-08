@@ -517,7 +517,7 @@ Add a video segment.
 - `relative_index` (`int`): Track rendering order index, default `0`
 - `duration` (`float|None`): Video duration (seconds), if provided, skip duration detection
 - `transition` (`str|None`): Transition type, optional parameter
-- `transition_duration` (`float|None`): Transition duration (seconds), default uses the default duration of transition type
+- `transition_duration` (`float|None`): Transition duration (seconds), default `0.5`
 - `mask_type` (`str|None`): Mask type (`linear`, `mirror`, `circle`, `rectangle`, `heart`, `star`), optional parameter
 - `mask_center_x` (`float`): Mask center X coordinate (0-1), default `0.5`
 - `mask_center_y` (`float`): Mask center Y coordinate (0-1), default `0.5`
@@ -538,6 +538,7 @@ Add a video segment.
 - For remote URLs, media is downloaded during `save_draft()` and stored under `./<draft_id>/assets/video/...`. For local files, the file is copied during `save_draft()`.
 - `draft_folder` only affects `replace_path` written into the draft; media still gets copied/downloaded under `./<draft_id>/assets/...` when saving.
 - `transition` must match the enum for your environment (`CapCut_Transition_type` or `Transition_type`); invalid names raise an error.
+- Transition semantics: A transition attaches to the end of this segment and blends into the next segment on the same video track. To create A→B, set `transition` on A. If there is no immediately adjacent next segment on that track (or there is a gap), the transition has no visible effect. Transitions do not cross tracks.
 - `mask_type` must match the environment's enum; invalid names raise an error. Rectangle-specific params apply only to rectangle masks.
 - `relative_index` controls layer order among tracks of the same type; higher means closer to the foreground.
 - Windows vs POSIX `draft_folder` paths are handled automatically; prefer absolute paths.
@@ -624,6 +625,7 @@ Add an image as a video segment of type photo. Supports intro/outro/combo animat
 - For remote URLs, media is downloaded during `save_draft()` and stored under `./<draft_id>/assets/image/...`. For local files, the file is copied during `save_draft()`.
 - `intro_animation` takes precedence over legacy `animation`; invalid names raise an error.
 - `transition` and `mask_type` must match the environment enums; invalid names raise an error.
+- Transition semantics: A transition attaches to the end of this segment and blends into the next segment on the same video track. To create A→B, set `transition` on A. If there is no immediately adjacent next segment on that track (or there is a gap), the transition has no visible effect. Transitions do not cross tracks.
 - `background_blur` must be in `{1,2,3,4}`; invalid values raise an error.
 - `relative_index` controls layer order.
 
